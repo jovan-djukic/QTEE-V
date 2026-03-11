@@ -1,0 +1,418 @@
+(*
+ * ProVerif model for the QKD Relay Protocol
+ * Tool: https://bblanche.gitlabpages.inria.fr/proverif/
+ *
+ * Participants
+ * ============
+ *   C   = Controller  — issues ML-DSA-65 X.509 certs, manages configuration
+ *   Ri  = Repetitor i — relays QKD-encrypted messages hop-by-hop
+ *
+ * Protocol phases
+ * ===============
+ *   Phase 1 (Setup): each Ri connects to C over TLS 1.3 (server-only auth).
+ *     1.  C's CA public key is pre-deployed to every repetitor (built-in).
+ *     2.  Ri opens TLS to C; verifies C's cert against pre-deployed CA pk.
+ *     3.  Inside TLS:
+ *           register          Ri → C : {rid, url}
+ *           nonce             C  → Ri: {nonce}
+ *           attest            Ri → C : {sign(nonce, hw_sk(rid))}
+ *           authenticated     C  → Ri: {ok}
+ *           configuration     Ri → C : {rid}
+ *           configuration     C  → Ri: {cfg, ca_pk}
+ *           generate_certs    Ri → C : {rep_pk}
+ *           certificate       C  → Ri: {cert(rid, rep_pk, ca_sk)}
+ *
+ *   Phase 2 (Relay): Ri accepts mTLS from left neighbor, decrypts QKD
+ *     layer, re-encrypts with its own QKD key to right neighbor.
+ *
+ * Attestation model (AMD SEV-SNP / Keystone style)
+ * =================================================
+ *   Each repetitor's secure enclave holds a unique hardware signing key
+ *   hw_sk(rid) that never leaves the enclave.  The corresponding public key
+ *   pk(hw_sk(rid)) is pre-registered with the controller (published by
+ *   the hardware manufacturer / provisioned at deployment time).
+ *   The controller publishes these HW public keys to the network at startup
+ *   (they are NOT secret).  Attestation = signing the nonce with hw_sk(rid).
+ *   The controller verifies the signature with pk(hw_sk(rid)).
+ *   An attacker who compromises the network cannot forge an attestation
+ *   because they cannot extract hw_sk(rid) from hardware.
+ *
+ * TLS abstraction
+ * ===============
+ *   TLS 1.3 is modeled as:
+ *     - Server publishes its cert.  Client verifies it against ca_pk.
+ *     - Client generates a fresh session key k, sends aenc(k, server_pk).
+ *     - Both parties use senc/sdec with k for all subsequent messages.
+ *   This captures: only the legitimate server can read k; the attacker
+ *   cannot recover k without the server's private key.
+ *
+ * QKD key abstraction
+ * ===================
+ *   qkd_k(A, B) is a [private] function — models the quantum hardware secret.
+ *   No polynomial-time computation can produce it from public information.
+ *   HW public keys are published explicitly so the attacker knows pk(hw_sk(rid))
+ *   but cannot compute hw_sk(rid) itself (it's a [private] function).
+ *)
+
+
+(* ================================================================ *)
+(*  Public network — the attacker controls this channel             *)
+(* ================================================================ *)
+free net: channel.
+
+
+(* ================================================================ *)
+(*  Types                                                           *)
+(* ================================================================ *)
+type pkey.    (* asymmetric public key  *)
+type skey.    (* asymmetric secret key  *)
+type cert.    (* X.509 DER certificate  *)
+type nodeid.  (* node identity ("DR1"…) *)
+
+
+(* ================================================================ *)
+(*  Node ID constants (declared early so queries can use them)      *)
+(* ================================================================ *)
+free ctrl_id: nodeid.
+free DR1:     nodeid.
+free DR2:     nodeid.
+free DR3:     nodeid.
+
+
+(* ================================================================ *)
+(*  Cryptographic primitives                                        *)
+(* ================================================================ *)
+
+(* --- Key pair --------------------------------------------------- *)
+fun pk(skey): pkey.
+
+(* --- ML-DSA-65 signatures --------------------------------------- *)
+(*  sign(m, sk)   : bitstring   — constructor, always succeeds      *)
+(*  verify(s,m,p) : bitstring   — destructor, succeeds iff valid    *)
+fun sign(bitstring, skey): bitstring.
+fun ok(): bitstring.
+reduc forall m: bitstring, sk: skey;
+    verify(sign(m, sk), m, pk(sk)) = ok().
+
+(* --- Hardware attestation key (AMD SEV-SNP / Keystone style) ----
+   hw_sk(rid) is burned into the repetitor's secure enclave.
+   [private] : the attacker cannot apply hw_sk (cannot extract it).
+   pk(hw_sk(rid)) is published at startup, so the attacker DOES know
+   the public key — they just cannot forge a signature with hw_sk. *)
+fun hw_sk(nodeid): skey [private].
+
+(* --- X.509 certificate ------------------------------------------
+   cert_make(id, pk, ca_sk) binds id ↔ pk under CA signature.
+   cert_getpk / cert_getid are destructors (defined only via reduc). *)
+fun cert_make(nodeid, pkey, skey): cert.
+
+reduc forall id: nodeid, p: pkey, cask: skey;
+    cert_getpk(cert_make(id, p, cask)) = p.
+reduc forall id: nodeid, p: pkey, cask: skey;
+    cert_getid(cert_make(id, p, cask)) = id.
+
+(* cert_ok(cert, ca_pk) = ok() iff the cert was signed by the CA   *)
+reduc forall id: nodeid, p: pkey, cask: skey;
+    cert_ok(cert_make(id, p, cask), pk(cask)) = ok().
+
+(* --- Asymmetric encryption (abstract TLS key-transport) ----------
+   Client generates a fresh session key k, sends aenc(k, server_pk).
+   Only the server (with server_sk) can decrypt. *)
+fun aenc(bitstring, pkey): bitstring.
+reduc forall m: bitstring, sk: skey;
+    adec(aenc(m, pk(sk)), sk) = m.
+
+(* --- Symmetric AEAD (models TLS record layer + QKD AES-CBC) ----- *)
+fun senc(bitstring, bitstring): bitstring.
+reduc forall m: bitstring, k: bitstring;
+    sdec(senc(m, k), k) = m.
+
+(* --- QKD symmetric key ------------------------------------------
+   Quantum-hardware-derived shared key between adjacent nodes.
+   [private]: the attacker cannot compute it from public information. *)
+fun qkd_k(nodeid, nodeid): bitstring [private].
+
+fun qkd_enc(bitstring, bitstring): bitstring.
+reduc forall m: bitstring, k: bitstring;
+    qkd_dec(qkd_enc(m, k), k) = m.
+
+
+(* ================================================================ *)
+(*  Constant tags (model JSON "action" field strings)              *)
+(* ================================================================ *)
+free tag_reg:    bitstring.    (* "register"              *)
+free tag_cfg:    bitstring.    (* "configuration"         *)
+free tag_gencrt: bitstring.    (* "generate_certificates" *)
+free tag_authed: bitstring.    (* "authenticated"         *)
+
+
+(* ================================================================ *)
+(*  Events                                                          *)
+(* ================================================================ *)
+event CtrlGotRegister(nodeid).                (* controller received register       *)
+event CtrlSentNonce(nodeid, bitstring).       (* controller sent nonce to rid       *)
+event RepSignedNonce(nodeid, bitstring).      (* rid's HW signed this nonce         *)
+event CtrlGotAttest(nodeid).                  (* controller accepted attestation    *)
+event CtrlIssuedCert(nodeid, pkey).           (* controller signed cert for rid     *)
+event RepGotCert(nodeid, pkey).               (* repetitor received its cert        *)
+event RepSentHop(bitstring, nodeid, nodeid).  (* plaintext forwarded Ri → Rj        *)
+event RepGotHop(bitstring, nodeid, nodeid).   (* plaintext received  Rj ← Ri        *)
+
+
+(* ================================================================ *)
+(*  Secrecy goals                                                   *)
+(* ================================================================ *)
+free secret_msg: bitstring [private].
+
+(* The attacker must not learn the relayed plaintext. *)
+query attacker(secret_msg).
+
+(* The attacker must not learn any QKD key. *)
+query attacker(qkd_k(DR1, DR2)).
+query attacker(qkd_k(DR2, DR3)).
+
+
+(* ================================================================ *)
+(*  Authentication / correspondence queries                         *)
+(* ================================================================ *)
+
+(*
+ * Q1: Controller issues a cert for rid only after attestation was accepted.
+ *     Core setup-protocol property: no cert without attestation.
+ *)
+query rid: nodeid, p: pkey;
+    event(CtrlIssuedCert(rid, p)) ==>
+    event(CtrlGotAttest(rid)).
+
+(*
+ * Q2: Controller accepts attestation only after it sent a nonce.
+ *     Prevents attestation without prior registration.
+ *)
+query rid: nodeid;
+    event(CtrlGotAttest(rid)) ==>
+    event(CtrlGotRegister(rid)).
+
+(*
+ * Q3: Injective cert-issuance ← attestation.
+ *     Prevents replay: one attestation cannot yield two certificates.
+ *)
+query rid: nodeid, p: pkey;
+    inj-event(CtrlIssuedCert(rid, p)) ==>
+    inj-event(CtrlGotAttest(rid)).
+
+(*
+ * Q4: HW attestation soundness.
+ *     If the controller accepted an attestation for rid and nonce n,
+ *     then the hardware device at rid actually signed nonce n.
+ *     An attacker who intercepts the nonce but lacks hw_sk(rid) cannot
+ *     produce a valid attestation signature.
+ *)
+query rid: nodeid, n: bitstring;
+    event(CtrlSentNonce(rid, n)) &&
+    event(CtrlGotAttest(rid)) ==>
+    event(RepSignedNonce(rid, n)).
+
+(*
+ * Q5: Hop-level message integrity.
+ *     If Rj received plaintext m from Ri, then Ri sent m to Rj.
+ *     Ensures messages are not fabricated in transit.
+ *)
+query m: bitstring, f: nodeid, t: nodeid;
+    event(RepGotHop(m, f, t)) ==>
+    event(RepSentHop(m, f, t)).
+
+
+(* ================================================================ *)
+(*  Controller process                                              *)
+(* ================================================================ *)
+let Controller(ca_sk: skey) =
+    let ca_pk = pk(ca_sk) in
+
+    (*
+     * Controller generates an ephemeral TLS certificate for its own identity.
+     * Published on the public channel so repetitors can verify it.
+     *)
+    new ctrl_sk: skey;
+    let ctrl_cert = cert_make(ctrl_id, pk(ctrl_sk), ca_sk) in
+    out(net, ctrl_cert);
+
+    (*
+     * TLS 1.3 server-only handshake (abstract):
+     *   Client sends aenc(session_key, ctrl_pk).
+     *   Only the holder of ctrl_sk can decrypt → session_key stays private.
+     *)
+    in(net, ek: bitstring);
+    let k = adec(ek, ctrl_sk) in
+
+    (* ── Step 1: Register ───────────────────────────────────────── *)
+    in(net, reg_m: bitstring);
+    let (=tag_reg, rid: nodeid, rep_url: bitstring) = sdec(reg_m, k) in
+    event CtrlGotRegister(rid);
+
+    new nonce_v: bitstring;
+    event CtrlSentNonce(rid, nonce_v);
+    out(net, senc(nonce_v, k));
+
+    (* ── Step 2: Attest ─────────────────────────────────────────── *)
+    (*  Expect: sign(nonce_v, hw_sk(rid)) from the enclave hardware.
+     *  Verify against the published HW public key pk(hw_sk(rid)). *)
+    in(net, att_m: bitstring);
+    let att_rx: bitstring = sdec(att_m, k) in
+    if verify(att_rx, nonce_v, pk(hw_sk(rid))) = ok() then
+
+    event CtrlGotAttest(rid);
+    out(net, senc(tag_authed, k));
+
+    (* ── Step 3: Configuration ──────────────────────────────────── *)
+    in(net, cfg_req_m: bitstring);
+    let (=tag_cfg, =rid) = sdec(cfg_req_m, k) in
+    new cfg_data: bitstring;
+    out(net, senc((tag_cfg, cfg_data, ca_pk), k));
+
+    (* ── Step 4: Generate certificates ─────────────────────────── *)
+    in(net, csr_m: bitstring);
+    let (=tag_gencrt, rep_pk: pkey) = sdec(csr_m, k) in
+    let rep_cert = cert_make(rid, rep_pk, ca_sk) in
+    event CtrlIssuedCert(rid, rep_pk);
+    out(net, senc(rep_cert, k)).
+
+
+(* ================================================================ *)
+(*  Repetitor setup process                                         *)
+(*                                                                  *)
+(*  ca_pk is pre-deployed (built into repetitor firmware).         *)
+(*  It is NOT fetched from the network at runtime.                 *)
+(* ================================================================ *)
+let RepSetup(rid: nodeid, ca_pk: pkey) =
+
+    (*
+     * TLS 1.3 client-side handshake (abstract):
+     *   1. Receive controller's TLS cert from the network.
+     *   2. Verify it against the pre-deployed CA public key.
+     *   3. Generate a fresh session key and send it encrypted.
+     *)
+    in(net, srv_cert: cert);
+    if cert_ok(srv_cert, ca_pk) = ok() then
+
+    let ctrl_pk = cert_getpk(srv_cert) in
+    new k: bitstring;
+    out(net, aenc(k, ctrl_pk));
+
+    (* ── Step 1: Register ───────────────────────────────────────── *)
+    out(net, senc((tag_reg, rid, rid), k));
+
+    in(net, nonce_m: bitstring);
+    let nonce_v: bitstring = sdec(nonce_m, k) in
+
+    (* ── Step 2: Attest ─────────────────────────────────────────── *)
+    (*  Sign the nonce with the hardware key that never leaves the enclave. *)
+    event RepSignedNonce(rid, nonce_v);
+    let att = sign(nonce_v, hw_sk(rid)) in
+    out(net, senc(att, k));
+
+    in(net, auth_m: bitstring);
+    let rx_auth: bitstring = sdec(auth_m, k) in
+    if rx_auth = tag_authed then
+
+    (* ── Step 3: Configuration ──────────────────────────────────── *)
+    out(net, senc((tag_cfg, rid), k));
+
+    in(net, cfg_m: bitstring);
+    let (=tag_cfg, cfg_data: bitstring, got_ca_pk: pkey) = sdec(cfg_m, k) in
+
+    (* ── Step 4: Generate ML-DSA-65 keypair and request cert ────── *)
+    new rep_sk: skey;
+    let rep_pk = pk(rep_sk) in
+    out(net, senc((tag_gencrt, rep_pk), k));
+
+    in(net, cert_m: bitstring);
+    let rep_cert: cert = sdec(cert_m, k) in
+
+    (*
+     * Verify the received cert:
+     *   - was signed by the PQC CA
+     *   - contains our public key
+     *   - contains our identity
+     *)
+    if cert_ok(rep_cert, ca_pk) = ok() then
+    if cert_getpk(rep_cert) = rep_pk then
+    if cert_getid(rep_cert) = rid then
+
+    event RepGotCert(rid, rep_pk);
+
+    (* Enter the relay loop (replicated: handles many messages) *)
+    !RepRelay(rid, rep_sk, rep_cert, ca_pk).
+
+
+(* ================================================================ *)
+(*  Repetitor relay process — one message hop                      *)
+(*                                                                  *)
+(*  mTLS server side: accept left neighbor, verify cert, decrypt.  *)
+(*  mTLS client side: connect to right neighbor, re-encrypt, send. *)
+(* ================================================================ *)
+let RepRelay(rid: nodeid, rep_sk: skey, rep_cert: cert, ca_pk: pkey) =
+
+    (*
+     * mTLS server side — left neighbor Rp connects to us.
+     * Peer sends (its cert, aenc(session_key, our_pk)).
+     * We verify the cert then decrypt the session key.
+     *)
+    in(net, (peer_cert: cert, ek_in: bitstring));
+    if cert_ok(peer_cert, ca_pk) = ok() then
+
+    let peer_id = cert_getid(peer_cert) in
+    let k_in    = adec(ek_in, rep_sk) in
+
+    (* Receive QKD-encrypted message over the established mTLS session *)
+    in(net, hop_msg: bitstring);
+    let (qkd_ct: bitstring, key_tag: bitstring) = sdec(hop_msg, k_in) in
+
+    (* QKD decryption with the key shared with the left neighbor *)
+    let plain = qkd_dec(qkd_ct, qkd_k(peer_id, rid)) in
+
+    event RepGotHop(plain, peer_id, rid);
+
+    (*
+     * mTLS client side — we connect to right neighbor Rn.
+     * Receive right neighbor's cert, verify it, then
+     * send our cert + aenc(fresh_session_key, right_pk).
+     *)
+    in(net, right_cert: cert);
+    if cert_ok(right_cert, ca_pk) = ok() then
+
+    let right_id = cert_getid(right_cert) in
+    let right_pk = cert_getpk(right_cert) in
+
+    new k_out: bitstring;
+    out(net, (rep_cert, aenc(k_out, right_pk)));
+
+    (* QKD re-encryption with the key shared with the right neighbor *)
+    let out_ct = qkd_enc(plain, qkd_k(rid, right_id)) in
+    out(net, senc((out_ct, rid), k_out));
+
+    event RepSentHop(plain, rid, right_id).
+
+
+(* ================================================================ *)
+(*  Main process                                                    *)
+(*                                                                  *)
+(*  !P = arbitrarily many parallel sessions of P.                  *)
+(*                                                                  *)
+(*  Hardware public keys are published to the network:             *)
+(*  - they are not secret (the attacker knows them)                *)
+(*  - but hw_sk is [private] so the attacker cannot sign with them *)
+(* ================================================================ *)
+process
+    new ca_sk: skey;
+    let ca_pk = pk(ca_sk) in
+
+    (* Publish HW attestation public keys — pre-registered, not secret *)
+    out(net, pk(hw_sk(DR1)));
+    out(net, pk(hw_sk(DR2)));
+    out(net, pk(hw_sk(DR3)));
+    (
+        !Controller(ca_sk)
+      | !RepSetup(DR1, ca_pk)
+      | !RepSetup(DR2, ca_pk)
+      | !RepSetup(DR3, ca_pk)
+    )

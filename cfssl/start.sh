@@ -1,0 +1,1 @@
+cfssl serve -address 0.0.0.0 -port 8888 -ca client-root-ca.crt -ca-key client-root-ca.key -config ca-config.json
