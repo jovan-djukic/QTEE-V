@@ -7,15 +7,15 @@ This controller implements:
    - Configuration distribution
    - ML-DSA-65 certificates for repetitor ↔ repetitor communication
    - RSA certificates (via CFSSL) for repetitor ↔ KME communication
-2. Plain HTTP server (port 8000, FastAPI/uvicorn) for bootstrap only:
-   - GET /ca_cert  — returns CA cert DER (public, no auth needed)
+2. Plain HTTP server (port 8000, FastAPI/uvicorn):
    - GET /health   — health check
 
 Bootstrap order:
-  Repetitor fetches CA cert via HTTP GET /ca_cert, then connects to
-  port 8001 via WolfSSL TLS (server-only auth: controller presents its
-  ML-DSA-65 cert; repetitor is authenticated via nonce-based attestation
-  inside the TLS tunnel).
+  The PQC CA certificate is pre-deployed on every repetitor (copied to
+  ./pqc_ca/ca_certificate.pem before first run).  Repetitors load it from
+  disk, then connect to port 8001 via WolfSSL TLS (server-only auth:
+  controller presents its ML-DSA-65 cert; repetitor is authenticated via
+  nonce-based attestation inside the TLS tunnel).
 
 Two PKI domains:
   - Internal (PQC): Controller signs with ML-DSA-65 CA
@@ -34,7 +34,7 @@ Usage:
 
 import threading
 from typing import Dict, Optional
-from fastapi import FastAPI, Response
+from fastapi import FastAPI
 import socket
 from urllib.parse import urlsplit
 import base64
@@ -765,16 +765,6 @@ def run_tls_server():
 
 
 # ==================== FastAPI: Bootstrap Endpoints Only ====================
-
-@application.get("/ca_cert")
-async def get_ca_cert():
-    """Return the PQC CA certificate DER (public — no authentication required).
-
-    Repetitors fetch this first to bootstrap the WolfSSL TLS connection to
-    port 8001, where they verify the controller's certificate against this CA.
-    """
-    ca_der = decode_pem(PQC_CA_CERTIFICATE, "CERTIFICATE")
-    return Response(content=ca_der, media_type="application/octet-stream")
 
 
 @application.get("/health")

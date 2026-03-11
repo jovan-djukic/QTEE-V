@@ -103,7 +103,125 @@ const char *QKD_CA_CERTIFICATE = "-----BEGIN CERTIFICATE-----\n"
 "wkKhllHrkuVRW7pw4wXXn8w=\n"
 "-----END CERTIFICATE-----";
 
-static char *g_pqc_ca_certificate = NULL;
+/* PQC CA certificate — pre-deployed in firmware (hardcoded at compile time).
+   NOT fetched over the network; identical to ./pqc_ca/ca_certificate.pem. */
+const char *PQC_CA_CERTIFICATE =
+"-----BEGIN CERTIFICATE-----\n"
+"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\n"
+"AAAAAAAFCxEaISc=\n"
+"-----END CERTIFICATE-----";
 
 const char *CONTROLLER_HOST = "127.0.0.1";
 // const char *CONTROLLER_HOST = "192.168.100.2";
@@ -1364,16 +1482,14 @@ int get_configuration_hybrid(const char *controller_host, int controller_port,
     WOLFSSL     *ssl      = NULL;
     int          ctrl_sock = -1;
 
-    /* ── Bootstrap: fetch CA cert via plain HTTP GET ─────────────────────── */
-    fprintf(stderr, "[DEBUG] Fetching CA cert from controller (%s:%d/ca_cert)...\n",
-            controller_host, controller_port);
+    /* ── Bootstrap: use pre-deployed (hardcoded) CA certificate ─────────── */
     int ca_der_len = 0;
-    char *ca_der_raw = http_get(controller_host, controller_port, "/ca_cert", &ca_der_len);
+    char *ca_der_raw = (char *)pem_to_der(PQC_CA_CERTIFICATE, "CERTIFICATE", &ca_der_len);
     if (!ca_der_raw || ca_der_len <= 0) {
-        fprintf(stderr, "[ERROR] Failed to fetch CA cert from controller\n");
+        fprintf(stderr, "[ERROR] Failed to decode hardcoded PQC CA certificate\n");
         return -1;
     }
-    fprintf(stderr, "[DEBUG] Fetched CA cert (%d bytes)\n", ca_der_len);
+    fprintf(stderr, "[DEBUG] Using hardcoded CA cert (%d bytes DER)\n", ca_der_len);
 
     /* ── Open WolfSSL TLS connection to controller:CTRL_TLS_PORT ─────────── */
     fprintf(stderr, "[DEBUG] Connecting to controller TLS on %s:%d...\n",
@@ -1513,8 +1629,6 @@ int get_configuration_hybrid(const char *controller_host, int controller_port,
         config->right_kme_peer      = extract_json_string(config_json, "right_kme_peer");
         config->whitelist           = extract_json_string(config_json, "whitelist");
 
-        char *pqc_ca = extract_json_string(config_json, "pqc_ca_certificate");
-        if (pqc_ca) g_pqc_ca_certificate = pqc_ca;
         free(config_json);
     }
 
@@ -2228,7 +2342,7 @@ int main(int argc, char *argv[]) {
 
     while (keep_running) {
         pqc_message_t msg = pqc_receive_message(port, config->pqc_private_key,
-                                                 config->pqc_certificate, g_pqc_ca_certificate,
+                                                 config->pqc_certificate, PQC_CA_CERTIFICATE,
                                                  config->whitelist, repetitor_id);
 
         if (!msg.message || !msg.sender_cn) {
@@ -2328,7 +2442,7 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "[%s][%s] Forwarding to %s...\n", ts, repetitor_id, to_url);
 
         int ret = pqc_send_message(to_host, to_port, config->pqc_private_key,
-                                    config->pqc_certificate, g_pqc_ca_certificate,
+                                    config->pqc_certificate, PQC_CA_CERTIFICATE,
                                     to_msg, repetitor_id);
 
         get_timestamp(ts, sizeof(ts));
@@ -2340,7 +2454,6 @@ int main(int argc, char *argv[]) {
     }
 
     free_config(config);
-    free(g_pqc_ca_certificate);
     cleanup_rng();
     wolfSSL_Cleanup();
 

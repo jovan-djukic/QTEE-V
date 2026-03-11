@@ -95,7 +95,9 @@ zEHJBAK2jxm9vjEgHs+zHKIxOiuCM6jmPZsG4PdBWkcf1C6Coof0kfO3vednsE/B
 wkKhllHrkuVRW7pw4wXXn8w=
 -----END CERTIFICATE-----"""
 
-# PQC CA certificate (loaded from configuration)
+# PQC CA certificate — pre-deployed in firmware, loaded from disk at startup.
+# NOT fetched over the network; the file must exist before the repetitor starts.
+PQC_CA_CERT_PATH = "./pqc_ca/ca_certificate.pem"
 PQC_CA_CERTIFICATE: Optional[str] = None
 
 
@@ -385,24 +387,21 @@ def extract_public_key_from_cert(cert_pem: str) -> bytes:
 
 def get_configuration_hybrid(
     controller_host: str,
-    controller_port: str,
     repetitor_id: str,
     repetitor_url: str
 ) -> Dict[str, Any]:
     """Get configuration over WolfSSL TLS.
 
-    Bootstrap: fetch CA cert via plain HTTP GET /ca_cert, then all protocol
-    steps (ML-KEM exchange, configuration, certificate generation) happen
-    inside a single WolfSSL TLS connection to controller:CTRL_TLS_PORT.
+    Bootstrap: CA cert is pre-deployed at PQC_CA_CERT_PATH (loaded from disk).
+    All protocol steps (register, attest, configuration, certificate generation)
+    happen inside a single WolfSSL TLS connection to controller:CTRL_TLS_PORT.
     """
-    base_url = f"http://{controller_host}:{controller_port}"
-
-    # ── Bootstrap: fetch CA cert via plain HTTP ──────────────────────────────
-    print(f"[DEBUG] Fetching CA cert from controller ({base_url}/ca_cert)...")
-    ca_resp = requests.get(f"{base_url}/ca_cert", timeout=10)
-    ca_resp.raise_for_status()
-    ca_der = ca_resp.content
-    print(f"[*] Fetched CA cert from controller ({len(ca_der)} bytes)")
+    # ── Bootstrap: load pre-deployed CA cert from disk ────────────────────────
+    print(f"[DEBUG] Loading CA cert from {PQC_CA_CERT_PATH}...")
+    with open(PQC_CA_CERT_PATH, "rb") as f:
+        ca_pem = f.read().decode()
+    ca_der = decode_pem(ca_pem, "CERTIFICATE")
+    print(f"[*] Loaded CA cert ({len(ca_der)} bytes)")
 
     # ── Open persistent WolfSSL TLS connection ────────────────────────────────
     print(f"[DEBUG] Connecting to controller TLS on {controller_host}:{CTRL_TLS_PORT}...")
@@ -452,7 +451,7 @@ def get_configuration_hybrid(
             print(f"[DEBUG] Received configuration")
 
             global PQC_CA_CERTIFICATE
-            PQC_CA_CERTIFICATE = configuration.get("pqc_ca_certificate")
+            PQC_CA_CERTIFICATE = ca_pem   # already loaded from pre-deployed file
 
             # ── Step 4: Generate keys and request certificates ────────────────
             print(f"[DEBUG] Generating ML-DSA-65 keypair for repetitor identity...")
@@ -778,7 +777,6 @@ def main(repetitor_id: str, port: int, print_semaphore: Semaphore) -> None:
     # Get configuration using hybrid PQC/RSA protocol
     result = get_configuration_hybrid(
         CONTROLLER_HOST,
-        CONTROLLER_PORT,
         repetitor_id,
         f"127.0.0.1:{port}"
     )
