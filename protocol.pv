@@ -15,10 +15,10 @@
  *     3.  Inside TLS:
  *           register          Ri → C : {rid, url}
  *           nonce             C  → Ri: {nonce}
- *           attest            Ri → C : {sign(nonce, hw_sk(rid))}
+ *           attest            Ri → C : {sign((nonce, meas(rid)), hw_sk(rid))}
  *           authenticated     C  → Ri: {ok}
  *           configuration     Ri → C : {rid}
- *           configuration     C  → Ri: {cfg, pkb(ca_pk)}
+ *           configuration     C  → Ri: {left_id, right_id}
  *           generate_certs    Ri → C : {pkb(rep_pk)}
  *           certificate       C  → Ri: {cert(rid, pkb(rep_pk), ca_sk)}
  *
@@ -79,9 +79,11 @@ type skey.   (* asymmetric secret key *)
 (*  Node ID constants                                               *)
 (* ================================================================ *)
 free ctrl_id: bitstring.
-free DR1:     bitstring.
-free DR2:     bitstring.
-free DR3:     bitstring.
+free R0:      bitstring.
+free R1:      bitstring.
+free R2:      bitstring.
+free APP_L:   bitstring.   (* left application endpoint *)
+free APP_R:   bitstring.   (* right application endpoint *)
 
 
 (* ================================================================ *)
@@ -108,6 +110,10 @@ reduc forall m: bitstring, sk: skey;
    pk(hw_sk(rid)) is published at startup so the attacker knows it
    but cannot forge a signature (they lack hw_sk). *)
 fun hw_sk(bitstring): skey [private].
+
+(* --- Platform measurement (Keystone SM measures enclave binary at boot) ---
+   meas(rid) is [private]: attacker cannot compute or predict the enclave hash. *)
+fun meas(bitstring): bitstring [private].
 
 (* --- X.509 certificate ------------------------------------------
    cert_make(rid, pkb(rep_pk), ca_sk) — cert is a bitstring.
@@ -159,8 +165,9 @@ free tag_authed: bitstring.    (* "authenticated"         *)
 (* ================================================================ *)
 event CtrlGotRegister(bitstring).                  (* controller received register *)
 event CtrlSentNonce(bitstring, bitstring).         (* CtrSentNonce(rid, nonce), controller sent nonce to rid *)
-event RepSignedNonce(bitstring, bitstring).        (* RepSignedNonce(rid, nonce), rid's HW singed this nonce *)
-event CtrlGotAttest(bitstring, bitstring).         (* CtrlGotAttest(rid, nonce), controller verified attestation for rid with this nonce *)
+event RepSignedReport(bitstring, bitstring, bitstring). (* RepSignedReport(rid, nonce, meas), rid's HW signed this report *)
+event CtrlGotAttest(bitstring, bitstring, bitstring).   (* CtrlGotAttest(rid, nonce, meas), controller verified attestation for rid *)
+event RepLoadedCfg(bitstring, bitstring, bitstring).    (* RepLoadedCfg(rid, left_id, right_id), rid loaded topology config *)
 event CtrlIssuedCert(bitstring, bitstring).        (* CtrlIssuedCert(rid, pkb(rep_pk)), controller sigend cert for rid *)
 event RepGotCert(bitstring, bitstring).            (* RepGotCert(rid, pkb(rep_pk)), rid received its certificate *)
 event RepSentHop(bitstring, bitstring, bitstring). (* RepSentHop(plain, from, to), plaintext forwarded from R_from to R_to *)
@@ -176,8 +183,8 @@ free secret_msg: bitstring [private].
 query attacker(secret_msg).
 
 (* The attacker must not learn any QKD key. *)
-query attacker(qkd_k(DR1, DR2)).
-query attacker(qkd_k(DR2, DR3)).
+query attacker(qkd_k(R0, R1)).
+query attacker(qkd_k(R1, R2)).
 
 
 (* ================================================================ *)
@@ -188,25 +195,25 @@ query attacker(qkd_k(DR2, DR3)).
  * Q1: Controller issues a cert for rid only after attestation was accepted.
  *     Core setup-protocol property: no cert without attestation.
  *)
-query rid: bitstring, pb: bitstring, n: bitstring;
+query rid: bitstring, pb: bitstring, n: bitstring, m: bitstring;
     event(CtrlIssuedCert(rid, pb)) ==>
-    event(CtrlGotAttest(rid, n)).
+    event(CtrlGotAttest(rid, n, m)).
 
 (*
  * Q2: Controller accepts attestation only after it sent a nonce.
  *     Prevents attestation without prior registration.
  *)
-query rid: bitstring, n: bitstring;
-    event(CtrlGotAttest(rid, n)) ==>
+query rid: bitstring, n: bitstring, m: bitstring;
+    event(CtrlGotAttest(rid, n, m)) ==>
     event(CtrlGotRegister(rid)).
 
 (*
  * Q3: Injective cert-issuance ← attestation.
  *     Prevents replay: one attestation cannot yield two certificates.
  *)
-query rid: bitstring, pb: bitstring, n: bitstring;
+query rid: bitstring, pb: bitstring, n: bitstring, m: bitstring;
     inj-event(CtrlIssuedCert(rid, pb)) ==>
-    inj-event(CtrlGotAttest(rid, n)).
+    inj-event(CtrlGotAttest(rid, n, m)).
 
 (*
  * Q4: HW attestation soundness (per-session).
@@ -215,9 +222,9 @@ query rid: bitstring, pb: bitstring, n: bitstring;
  *     Nonce n ties both events to the same session, so cross-session
  *     mixing is impossible.
  *)
-query rid: bitstring, n: bitstring;
-    inj-event(CtrlGotAttest(rid, n)) ==>
-    inj-event(RepSignedNonce(rid, n)).
+query rid: bitstring, n: bitstring, m: bitstring;
+    inj-event(CtrlGotAttest(rid, n, m)) ==>
+    inj-event(RepSignedReport(rid, n, m)).
 
 (*
  * Q5: Hop-level message integrity.
@@ -227,6 +234,23 @@ query rid: bitstring, n: bitstring;
 query m: bitstring, f: bitstring, t: bitstring;
     event(RepGotHop(m, f, t)) ==>
     event(RepSentHop(m, f, t)).
+
+(*
+ * Q6: Topology binding on receive.
+ *     A relay accepts a hop from f only if f is a configured neighbor
+ *     (left or right — relay is bidirectional).
+ *)
+query x: bitstring, f: bitstring, t: bitstring, l: bitstring, r: bitstring;
+    event(RepGotHop(x, f, t)) ==>
+    (event(RepLoadedCfg(t, f, r)) || event(RepLoadedCfg(t, l, f))).
+
+(*
+ * Q7: Topology binding on send.
+ *     A relay forwards to t only if t is a configured neighbor.
+ *)
+query x: bitstring, f: bitstring, t: bitstring, l: bitstring, r: bitstring;
+    event(RepSentHop(x, f, t)) ==>
+    (event(RepLoadedCfg(f, l, t)) || event(RepLoadedCfg(f, t, r))).
 
 
 (* ================================================================ *)
@@ -266,16 +290,21 @@ let Controller(ca_sk: skey) =
      *  Verify against the published HW public key pk(hw_sk(rid)). *)
     in(net, att_m: bitstring);
     let att_rx: bitstring = sdec(att_m, k) in
-    if verify(att_rx, nonce_v, pk(hw_sk(rid))) = ok() then
+    let att_payload = (rid, nonce_v, meas(rid)) in
+    if verify(att_rx, att_payload, pk(hw_sk(rid))) = ok() then
 
-    event CtrlGotAttest(rid, nonce_v);
+    event CtrlGotAttest(rid, nonce_v, meas(rid));
     out(net, senc(tag_authed, k));
 
     (* ── Step 3: Configuration ──────────────────────────────────── *)
     in(net, cfg_req_m: bitstring);
     let (=tag_cfg, =rid) = sdec(cfg_req_m, k) in
-    new cfg_data: bitstring;
-    out(net, senc((tag_cfg, cfg_data, ca_pkb), k));
+    if rid = R0 then
+      out(net, senc((tag_cfg, APP_L, R1), k))
+    else if rid = R1 then
+      out(net, senc((tag_cfg, R0, R2), k))
+    else if rid = R2 then
+      out(net, senc((tag_cfg, R1, APP_R), k));
 
     (* ── Step 4: Generate certificates ─────────────────────────── *)
     in(net, csr_m: bitstring);
@@ -288,51 +317,92 @@ let Controller(ca_sk: skey) =
 (* ================================================================ *)
 (*  Repetitor relay process — one message hop                      *)
 (*                                                                  *)
-(*  mTLS server side: accept left neighbor, verify cert, decrypt.  *)
-(*  mTLS client side: connect to right neighbor, re-encrypt, send. *)
+(*  Both directions (left↔right) and two channel variants:        *)
+(*    App neighbor:   PQC TLS only; inner payload = message data  *)
+(*    Relay neighbor: PQC TLS outer + QKD/AES inner layer         *)
 (* ================================================================ *)
-let RepRelay(rid: bitstring, rep_sk: skey, rep_pkb: bitstring,
-             rep_cert: bitstring, ca_pkb: bitstring) =
+let RepRelay(rid: bitstring, left_id: bitstring, right_id: bitstring,
+             rep_sk: skey, rep_cert: bitstring, ca_pkb: bitstring) =
 
-    (*
-     * mTLS server side — left neighbor Rp connects to us.
-     * Peer sends (its cert, aenc(session_key, our_pk)).
-     * We verify the cert then decrypt the session key.
-     *)
+    (* PQC mTLS server side: accept from either configured neighbor. *)
     in(net, (peer_cert: bitstring, ek_in: bitstring));
     if cert_ok(peer_cert, ca_pkb) = ok() then
 
-    let peer_id  = cert_getid(peer_cert) in
-    let k_in     = adec(ek_in, rep_sk) in
+    let peer_id = cert_getid(peer_cert) in
+    let k_in    = adec(ek_in, rep_sk) in
 
-    (* Receive QKD-encrypted message over the established mTLS session *)
+    (* Receive hop message over TLS.
+       payload = message data (app peer) or QKD-ciphertext (relay peer). *)
     in(net, hop_msg: bitstring);
-    let (qkd_ct: bitstring, key_tag: bitstring) = sdec(hop_msg, k_in) in
+    let (payload: bitstring, key_tag: bitstring) = sdec(hop_msg, k_in) in
+    if key_tag = peer_id then
 
-    (* QKD decryption with the key shared with the left neighbor *)
-    let plain = qkd_dec(qkd_ct, qkd_k(peer_id, rid)) in
-    event RepGotHop(plain, peer_id, rid);
+    (* PQC mTLS client side: get the forward neighbor's cert, key-wrap. *)
+    in(net, fwd_cert: bitstring);
+    if cert_ok(fwd_cert, ca_pkb) = ok() then
 
-    (*
-     * mTLS client side — we connect to right neighbor Rn.
-     * Receive right neighbor's cert, verify it, then
-     * send our cert + aenc(fresh_session_key, right_pk).
-     *)
-    in(net, right_cert: bitstring);
-    if cert_ok(right_cert, ca_pkb) = ok() then
-
-    let right_id   = cert_getid(right_cert) in
-    let right_pkb  = cert_getpk(right_cert) in
-    let pkb(right_pk: pkey) = right_pkb in
+    let fwd_id  = cert_getid(fwd_cert) in
+    let fwd_pkb = cert_getpk(fwd_cert) in
+    let pkb(fwd_pk: pkey) = fwd_pkb in
 
     new k_out: bitstring;
-    out(net, (rep_cert, aenc(k_out, right_pk)));
+    out(net, (rep_cert, aenc(k_out, fwd_pk)));
 
-    (* QKD re-encryption with the key shared with the right neighbor *)
-    let out_ct = qkd_enc(plain, qkd_k(rid, right_id)) in
-    out(net, senc((out_ct, rid), k_out));
-
-    event RepSentHop(plain, rid, right_id).
+    (* Enforce topology: must forward to the configured opposite neighbor. *)
+    if peer_id = left_id && fwd_id = right_id then (
+        (* Message arrived from left; forward to right. *)
+        if peer_id = APP_L then (
+            (* Left is app: no QKD layer on receive; add QKD on send if right is relay. *)
+            event RepGotHop(payload, peer_id, rid);
+            if fwd_id = APP_R then (
+                out(net, senc((payload, rid), k_out));
+                event RepSentHop(payload, rid, right_id)
+            ) else (
+                let out_ct = qkd_enc(payload, qkd_k(rid, right_id)) in
+                out(net, senc((out_ct, rid), k_out));
+                event RepSentHop(payload, rid, right_id)
+            )
+        ) else (
+            (* Left is relay: QKD-decrypt inner layer, then re-encrypt for right. *)
+            let plain = qkd_dec(payload, qkd_k(peer_id, rid)) in
+            event RepGotHop(plain, peer_id, rid);
+            if fwd_id = APP_R then (
+                out(net, senc((plain, rid), k_out));
+                event RepSentHop(plain, rid, right_id)
+            ) else (
+                let out_ct = qkd_enc(plain, qkd_k(rid, right_id)) in
+                out(net, senc((out_ct, rid), k_out));
+                event RepSentHop(plain, rid, right_id)
+            )
+        )
+    )
+    else if peer_id = right_id && fwd_id = left_id then (
+        (* Message arrived from right; forward to left. *)
+        if peer_id = APP_R then (
+            (* Right is app: no QKD layer on receive; add QKD on send if left is relay. *)
+            event RepGotHop(payload, peer_id, rid);
+            if fwd_id = APP_L then (
+                out(net, senc((payload, rid), k_out));
+                event RepSentHop(payload, rid, left_id)
+            ) else (
+                let out_ct = qkd_enc(payload, qkd_k(rid, left_id)) in
+                out(net, senc((out_ct, rid), k_out));
+                event RepSentHop(payload, rid, left_id)
+            )
+        ) else (
+            (* Right is relay: QKD-decrypt inner layer, then re-encrypt for left. *)
+            let plain = qkd_dec(payload, qkd_k(peer_id, rid)) in
+            event RepGotHop(plain, peer_id, rid);
+            if fwd_id = APP_L then (
+                out(net, senc((plain, rid), k_out));
+                event RepSentHop(plain, rid, left_id)
+            ) else (
+                let out_ct = qkd_enc(plain, qkd_k(rid, left_id)) in
+                out(net, senc((out_ct, rid), k_out));
+                event RepSentHop(plain, rid, left_id)
+            )
+        )
+    ).
 
 
 (* ================================================================ *)
@@ -367,9 +437,10 @@ let RepSetup(rid: bitstring, ca_pk: pkey) =
     let nonce_v: bitstring = sdec(nonce_m, k) in
 
     (* ── Step 2: Attest ─────────────────────────────────────────── *)
-    (*  Sign the nonce with the hardware key that never leaves the enclave. *)
-    event RepSignedNonce(rid, nonce_v);
-    let att = sign(nonce_v, hw_sk(rid)) in
+    (*  Sign (nonce, measurement) — binds attestation to enclave software state. *)
+    let att_payload = (rid, nonce_v, meas(rid)) in
+    event RepSignedReport(rid, nonce_v, meas(rid));
+    let att = sign(att_payload, hw_sk(rid)) in
     out(net, senc(att, k));
 
     in(net, auth_m: bitstring);
@@ -380,7 +451,8 @@ let RepSetup(rid: bitstring, ca_pk: pkey) =
     out(net, senc((tag_cfg, rid), k));
 
     in(net, cfg_m: bitstring);
-    let (=tag_cfg, cfg_data: bitstring, got_ca_pkb: bitstring) = sdec(cfg_m, k) in
+    let (=tag_cfg, left_id: bitstring, right_id: bitstring) = sdec(cfg_m, k) in
+    event RepLoadedCfg(rid, left_id, right_id);
 
     (* ── Step 4: Generate ML-DSA-65 keypair and request cert ────── *)
     new rep_sk: skey;
@@ -403,8 +475,36 @@ let RepSetup(rid: bitstring, ca_pk: pkey) =
 
     event RepGotCert(rid, rep_pkb);
 
+    (* Publish our cert so neighbors can receive and verify it over net. *)
+    out(net, rep_cert);
+
     (* Enter the relay loop (replicated: handles many messages) *)
-    !RepRelay(rid, rep_sk, rep_pkb, rep_cert, ca_pkb).
+    !RepRelay(rid, left_id, right_id, rep_sk, rep_cert, ca_pkb).
+
+
+(* ================================================================ *)
+(*  Application source process                                      *)
+(*                                                                  *)
+(*  Models APP_L sending secret_msg to DR1 over PQC TLS (no QKD). *)
+(*  Makes the attacker(secret_msg) secrecy query non-vacuous by   *)
+(*  giving ProVerif a concrete execution trace through the chain.  *)
+(* ================================================================ *)
+let AppSource(app_sk: skey, app_cert: bitstring, ca_pkb: bitstring) =
+
+    (* Read DR1's published cert to learn its public key. *)
+    in(net, dr1_cert: bitstring);
+    if cert_ok(dr1_cert, ca_pkb) = ok() then
+    if cert_getid(dr1_cert) = R0 then
+
+    let dr1_pkb = cert_getpk(dr1_cert) in
+    let pkb(dr1_pk: pkey) = dr1_pkb in
+
+    (* PQC mTLS client handshake: send our cert + TLS session key. *)
+    new k: bitstring;
+    out(net, (app_cert, aenc(k, dr1_pk)));
+
+    (* Send secret_msg inside TLS — no QKD layer on the app side. *)
+    out(net, senc((secret_msg, APP_L), k)).
 
 
 (* ================================================================ *)
@@ -412,15 +512,26 @@ let RepSetup(rid: bitstring, ca_pk: pkey) =
 (* ================================================================ *)
 process
     new ca_sk: skey;
-    let ca_pk = pk(ca_sk) in
+    let ca_pk  = pk(ca_sk) in
+    let ca_pkb = pkb(ca_pk) in
 
-    (* Publish HW attestation public keys — not secret, just unforgeable *)
-    out(net, pkb(pk(hw_sk(DR1))));
-    out(net, pkb(pk(hw_sk(DR2))));
-    out(net, pkb(pk(hw_sk(DR3))));
+    (* Issue PQC certs for application endpoints (CA-signed, publicly known). *)
+    new app_l_sk: skey;
+    let app_l_cert = cert_make(APP_L, pkb(pk(app_l_sk)), ca_sk) in
+    out(net, app_l_cert);
+
+    new app_r_sk: skey;
+    let app_r_cert = cert_make(APP_R, pkb(pk(app_r_sk)), ca_sk) in
+    out(net, app_r_cert);
+
+    (* Publish HW attestation public keys — not secret, just unforgeable. *)
+    out(net, pkb(pk(hw_sk(R0))));
+    out(net, pkb(pk(hw_sk(R1))));
+    out(net, pkb(pk(hw_sk(R2))));
     (
         !Controller(ca_sk)
-      | !RepSetup(DR1, ca_pk)
-      | !RepSetup(DR2, ca_pk)
-      | !RepSetup(DR3, ca_pk)
+      | !RepSetup(R0, ca_pk)
+      | !RepSetup(R1, ca_pk)
+      | !RepSetup(R2, ca_pk)
+      | AppSource(app_l_sk, app_l_cert, ca_pkb)
     )

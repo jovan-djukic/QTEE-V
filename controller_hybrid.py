@@ -633,7 +633,10 @@ def handle_configuration(data: dict) -> dict:
             "right_cn": LINKS[index]["start_sae"] if index < len(LINKS) else "test_client",
             "left_kme_peer": LINKS[index - 1]["start_sae"] if index > 0 else "",
             "right_kme_peer": LINKS[index]["end_sae"] if index < len(LINKS) else "",
-            "whitelist": "|".join([r["repetitor_id"] for r in REPETITORS if r and r["repetitor_id"] != repetitor_id] + ["test_client", "QKD Relay PQC CA"]),
+            "whitelist": "|".join(filter(None, [
+                REPETITORS[index - 1]["repetitor_id"] if index > 0 else "test_client",
+                REPETITORS[index + 1]["repetitor_id"] if index < len(REPETITORS) - 1 else "test_client",
+            ])),
             "pqc_ca_certificate": PQC_CA_CERTIFICATE
         }
 

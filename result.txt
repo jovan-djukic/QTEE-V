@@ -1,2 +1,0 @@
-[19:59:01] mTLS listener on 0.0.0.0:8002 (waiting…)
-[19:59:01] mTLS listener on 0.0.0.0:8001 (waiting…)
