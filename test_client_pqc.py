@@ -3,13 +3,13 @@
 PQC Test Client for QKD Relay
 
 Uses WolfSSL mTLS (wolfssl_mldsa.py) and standard X.509 certificates,
-compatible with controller_hybrid.py, repetitor_hybrid.py, and eapp_final.c.
+compatible with controller.py, relay.py, and relay.c.
 
 Usage:
     # Generate test client credentials (one time):
     python test_client_pqc.py --generate-credentials
 
-    # Send a message to DR0 (left edge):
+    # Send a message to R0 (left edge):
     python test_client_pqc.py --send --target 127.0.0.1:9000 --message "Hello!"
 
     # Listen for incoming messages:
@@ -72,7 +72,7 @@ def decode_pem(pem_str: str, label: str) -> bytes:
 
 
 # ==================== X.509 DER builder ====================
-# Same DER primitives as generate_pqc_ca.py / controller_hybrid.py
+# Same DER primitives as generate_pqc_ca.py / controller.py
 
 def _enc_len(n: int) -> bytes:
     if n < 0x80:   return bytes([n])
@@ -241,7 +241,7 @@ def load_credentials() -> bool:
 # ==================== Send / Receive ====================
 
 def send_message(host: str, port: int, message: str) -> bool:
-    """Connect to a repetitor and send a message using WolfSSL mTLS."""
+    """Connect to a relay and send a message using WolfSSL mTLS."""
     print(f"[*] Connecting to {host}:{port}...")
 
     pkcs8_key = wolfssl_mldsa.pkcs8_mldsa65_der(PQC_PRIVATE_KEY)
@@ -282,7 +282,7 @@ def send_message(host: str, port: int, message: str) -> bool:
 
 
 def receive_message(port: int) -> bool:
-    """Listen for one message from a repetitor using WolfSSL mTLS."""
+    """Listen for one message from a relay using WolfSSL mTLS."""
     print(f"[*] Listening on 0.0.0.0:{port}...")
 
     pkcs8_key = wolfssl_mldsa.pkcs8_mldsa65_der(PQC_PRIVATE_KEY)
@@ -344,10 +344,10 @@ Examples:
   # Generate credentials (one time, requires pqc_ca/ to exist):
   python test_client_pqc.py --generate-credentials
 
-  # Send message to left edge (DR0):
+  # Send message to left edge (R0):
   python test_client_pqc.py --send --target 127.0.0.1:9000 --message "Hello!"
 
-  # Send message to right edge (DR2):
+  # Send message to right edge (R2):
   python test_client_pqc.py --send --target 127.0.0.1:9002 --message "Hello!"
 
   # Listen for messages on port 8998:
@@ -361,9 +361,9 @@ Examples:
     parser.add_argument("--generate-credentials", action="store_true",
                         help="Generate test client credentials using PQC CA")
     parser.add_argument("--send", action="store_true",
-                        help="Send a message to a repetitor")
+                        help="Send a message to a relay")
     parser.add_argument("--receive", action="store_true",
-                        help="Listen for an incoming message from a repetitor")
+                        help="Listen for an incoming message from a relay")
     parser.add_argument("--target", type=str, default="127.0.0.1:9000",
                         help="Target host:port for --send (default: 127.0.0.1:9000)")
     parser.add_argument("--port", type=int, default=8998,

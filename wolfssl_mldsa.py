@@ -153,6 +153,52 @@ def _skip_tlv(data: bytes, pos: int) -> int:
     return pos + length
 
 
+def _read_tlv(data: bytes, pos: int):
+    """Parse one DER TLV at pos. Returns (tag, value_bytes, next_pos)."""
+    tag = data[pos]; pos += 1
+    length, pos = _parse_len(data, pos)
+    return tag, data[pos:pos + length], pos + length
+
+
+_OID_CN = bytes([0x55, 0x04, 0x03])
+
+
+def _parse_name_cn(name_tlv: bytes) -> str:
+    """Extract CommonName from an X.509 Name TLV (includes outer tag+length)."""
+    _, seq_val, _ = _read_tlv(name_tlv, 0)
+    pos = 0
+    while pos < len(seq_val):
+        _, rdn_val, pos = _read_tlv(seq_val, pos)
+        p2 = 0
+        while p2 < len(rdn_val):
+            _, attr_val, p2 = _read_tlv(rdn_val, p2)
+            p3 = 0
+            _, oid_val, p3 = _read_tlv(attr_val, p3)
+            _, str_val, _ = _read_tlv(attr_val, p3)
+            if oid_val == _OID_CN:
+                return str_val.decode('utf-8')
+    return ""
+
+
+def parse_cert_subject_cn(cert_der: bytes) -> str:
+    """Extract the subject CommonName from an X.509 certificate (DER)."""
+    _, cert_val, _ = _read_tlv(cert_der, 0)
+    pos = 0
+    _, tbs_val, pos = _read_tlv(cert_val, pos)
+
+    tpos = 0
+    if tbs_val[tpos] == 0xA0:          # version [0] EXPLICIT (optional)
+        _, _, tpos = _read_tlv(tbs_val, tpos)
+    _, _, tpos = _read_tlv(tbs_val, tpos)   # serialNumber
+    _, _, tpos = _read_tlv(tbs_val, tpos)   # signature AlgorithmIdentifier
+    _, _, tpos = _read_tlv(tbs_val, tpos)   # issuer
+    _, _, tpos = _read_tlv(tbs_val, tpos)   # validity
+
+    subj_start = tpos
+    _, _, tpos = _read_tlv(tbs_val, tpos)   # subject
+    return _parse_name_cn(tbs_val[subj_start:tpos])
+
+
 def verify_cert_der(cert_der: bytes, ca_der: bytes) -> bool:
     """
     Verify an ML-DSA-65 X.509 DER certificate against a CA DER certificate
@@ -236,6 +282,11 @@ _lib.pqc_tls_read.argtypes = [
 ]
 _lib.pqc_tls_read.restype = ctypes.c_int
 
+_lib.pqc_tls_read_some.argtypes = [
+    ctypes.c_void_p, ctypes.POINTER(ctypes.c_ubyte), ctypes.c_int
+]
+_lib.pqc_tls_read_some.restype = ctypes.c_int
+
 # Generous ceiling for a DER-encoded ML-DSA-65 X.509 cert
 _CERT_DER_MAX = 8192
 
@@ -284,6 +335,29 @@ class PqcTlsConn:
         if _lib.pqc_tls_read(self._h, buf, n) != 0:
             raise OSError("pqc_tls_read failed")
         return bytes(buf)
+
+    # -- unframed stream I/O (HTTP and other length-unknown protocols) --
+
+    send = write  # socket-like alias
+
+    def recv(self, max_len: int = 4096) -> bytes:
+        """Read up to max_len bytes. Returns b'' on a clean peer close_notify."""
+        buf = (ctypes.c_ubyte * max_len)()
+        n = _lib.pqc_tls_read_some(self._h, buf, max_len)
+        if n < 0:
+            raise OSError("pqc_tls_read_some failed")
+        return bytes(buf[:n])
+
+    def recv_until_close(self) -> bytes:
+        """Read until the peer sends a clean close_notify (e.g. a
+        'Connection: close' HTTP response)."""
+        chunks = []
+        while True:
+            chunk = self.recv()
+            if not chunk:
+                break
+            chunks.append(chunk)
+        return b"".join(chunks)
 
     # -- length-prefixed message framing (4-byte big-endian header) --
 
@@ -343,6 +417,36 @@ def pqc_tls_server_accept(fd: int, cert_der: bytes, pkcs8_der: bytes, ca_der: by
     return conn
 
 
+def pqc_tls_server_accept_unverified(fd: int, cert_der: bytes, pkcs8_der: bytes,
+                                      ctx_ca_der: bytes) -> PqcTlsConn:
+    """Like pqc_tls_server_accept(), but skips the post-handshake peer-cert
+    check — the caller verifies later via verify_cert_der() with whichever
+    single CA is appropriate.
+
+    Used where the right CA to check against isn't known until after the
+    handshake (e.g. a KME server that must accept a relay's Relay-CA cert on
+    SAE-facing endpoints, or a peer KME's KME-CA cert on internal ones —
+    determined by request path, so verification has to wait until the
+    request has been read).
+
+    ctx_ca_der only has to be *some* valid CA DER for WolfSSL's context
+    setup; it has no bearing on which cert is actually accepted, since the
+    handshake-level chain check is bypassed regardless (see
+    pqc_tls_server_new / _pqc_verify_accept_all).
+    """
+    os.set_blocking(fd, True)
+    c, cl = _buf(cert_der)
+    k, kl = _buf(pkcs8_der)
+    a, al = _buf(ctx_ca_der)
+    handle = _lib.pqc_tls_server_new(c, cl, k, kl, a, al)
+    if not handle:
+        raise RuntimeError("pqc_tls_server_new failed")
+    if _lib.pqc_tls_accept(handle, fd) != 0:
+        _lib.pqc_tls_free(handle)
+        raise RuntimeError("TLS server handshake failed")
+    return PqcTlsConn(handle)
+
+
 def pqc_tls_client_connect(fd: int, cert_der: bytes, pkcs8_der: bytes, ca_der: bytes) -> PqcTlsConn:
     """Create client TLS context, perform mTLS handshake on fd, return PqcTlsConn.
 
@@ -372,7 +476,7 @@ def pqc_tls_client_connect(fd: int, cert_der: bytes, pkcs8_der: bytes, ca_der: b
 def pqc_tls_client_connect_anon(fd: int, ca_der: bytes) -> PqcTlsConn:
     """TLS client with server-only authentication (no client certificate).
 
-    Used for the controller channel: the repetitor does not yet hold a
+    Used for the controller channel: the relay does not yet hold a
     CA-signed cert.  The controller's cert is verified via verify_cert_der()
     (WolfSSL raw crypto) after the handshake.
     """
@@ -397,9 +501,9 @@ def pqc_tls_client_connect_anon(fd: int, ca_der: bytes) -> PqcTlsConn:
 def pqc_tls_server_accept_anon_client(fd: int, cert_der: bytes, pkcs8_der: bytes) -> PqcTlsConn:
     """TLS server that does NOT require a client certificate.
 
-    Used for the controller: the connecting repetitor has no CA-signed cert
+    Used for the controller: the connecting relay has no CA-signed cert
     yet.  The controller authenticates itself via its ML-DSA-65 cert; the
-    repetitor authenticates via the attestation exchange inside the TLS tunnel.
+    relay authenticates via the attestation exchange inside the TLS tunnel.
 
     Steps:
       1. os.set_blocking(fd, True)

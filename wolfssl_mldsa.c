@@ -146,6 +146,19 @@ static int _pqc_verify_accept_all(int preverify_ok, WOLFSSL_X509_STORE_CTX *ctx)
     return 1;
 }
 
+/*
+ * Restrict the TLS 1.3 key-exchange group to pure ML-KEM-768 -- strict PQC,
+ * no classical fallback. A peer that doesn't support ML-KEM-768 simply
+ * fails the handshake rather than silently negotiating a classical group.
+ * Independent of ML-DSA-65 (certificate signatures, handled separately
+ * above) -- this only affects how the session key is derived.
+ */
+static int _pqc_set_mlkem_group(WOLFSSL_CTX *ctx)
+{
+    int groups[1] = { WOLFSSL_ML_KEM_768 };
+    return wolfSSL_CTX_set_groups(ctx, groups, 1);
+}
+
 static pqc_tls_t *_pqc_tls_new(WOLFSSL_METHOD *method, int is_server,
     const unsigned char *cert_der, int cert_len,
     const unsigned char *pkcs8_key, int key_len,
@@ -162,6 +175,11 @@ static pqc_tls_t *_pqc_tls_new(WOLFSSL_METHOD *method, int is_server,
     if (!tls->ctx) {
         fprintf(stderr, "[TLS] wolfSSL_CTX_new failed\n");
         free(tls); return NULL;
+    }
+
+    if (_pqc_set_mlkem_group(tls->ctx) != WOLFSSL_SUCCESS) {
+        fprintf(stderr, "[TLS] set_groups (ML-KEM-768) failed\n");
+        wolfSSL_CTX_free(tls->ctx); free(tls); return NULL;
     }
 
     /* Load our certificate (DER) */
@@ -225,7 +243,7 @@ pqc_tls_t *pqc_tls_client_new(
 
 /*
  * TLS 1.3 client with server-only authentication (no client certificate).
- * Used for the controller channel where the repetitor does not yet have a
+ * Used for the controller channel where the relay does not yet have a
  * CA-signed cert.  Peer cert is verified in Python after the handshake.
  */
 pqc_tls_t *pqc_tls_client_anon_new(
@@ -242,6 +260,11 @@ pqc_tls_t *pqc_tls_client_anon_new(
     if (!tls->ctx) {
         fprintf(stderr, "[TLS] pqc_tls_client_anon_new: wolfSSL_CTX_new failed\n");
         free(tls); return NULL;
+    }
+
+    if (_pqc_set_mlkem_group(tls->ctx) != WOLFSSL_SUCCESS) {
+        fprintf(stderr, "[TLS] pqc_tls_client_anon_new: set_groups (ML-KEM-768) failed\n");
+        wolfSSL_CTX_free(tls->ctx); free(tls); return NULL;
     }
 
     /* Load CA so WolfSSL can verify the server cert signature. */
@@ -265,9 +288,9 @@ pqc_tls_t *pqc_tls_client_anon_new(
 
 /*
  * TLS 1.3 server that does NOT request a client certificate.
- * Used for the controller where the connecting repetitor has no cert yet.
- * The controller authenticates itself to the repetitor via its own cert.
- * Repetitor authentication is handled by the attestation exchange inside TLS.
+ * Used for the controller where the connecting relay has no cert yet.
+ * The controller authenticates itself to the relay via its own cert.
+ * Relay authentication is handled by the attestation exchange inside TLS.
  */
 pqc_tls_t *pqc_tls_server_anon_client_new(
     const unsigned char *cert_der, int cert_len,
@@ -284,6 +307,11 @@ pqc_tls_t *pqc_tls_server_anon_client_new(
     if (!tls->ctx) {
         fprintf(stderr, "[TLS] pqc_tls_server_anon_client_new: wolfSSL_CTX_new failed\n");
         free(tls); return NULL;
+    }
+
+    if (_pqc_set_mlkem_group(tls->ctx) != WOLFSSL_SUCCESS) {
+        fprintf(stderr, "[TLS] pqc_tls_server_anon_client_new: set_groups (ML-KEM-768) failed\n");
+        wolfSSL_CTX_free(tls->ctx); free(tls); return NULL;
     }
 
     int ret = wolfSSL_CTX_use_certificate_buffer(tls->ctx, cert_der, cert_len,
@@ -306,7 +334,7 @@ pqc_tls_t *pqc_tls_server_anon_client_new(
         wolfSSL_CTX_free(tls->ctx); free(tls); return NULL;
     }
 
-    /* Do not request a client certificate from the repetitor. */
+    /* Do not request a client certificate from the relay. */
     wolfSSL_CTX_set_verify(tls->ctx, WOLFSSL_VERIFY_NONE, NULL);
 
     return tls;
@@ -328,6 +356,7 @@ int pqc_tls_accept(pqc_tls_t *tls, int fd)
                 ret, err, err_buf);
         return -1;
     }
+    fprintf(stderr, "[TLS] server handshake group: %s\n", wolfSSL_get_curve_name(tls->ssl));
     return 0;
 }
 
@@ -347,6 +376,7 @@ int pqc_tls_connect(pqc_tls_t *tls, int fd)
                 ret, err, err_buf);
         return -1;
     }
+    fprintf(stderr, "[TLS] client handshake group: %s\n", wolfSSL_get_curve_name(tls->ssl));
     return 0;
 }
 
@@ -372,6 +402,21 @@ int pqc_tls_read(pqc_tls_t *tls, unsigned char *buf, int len)
         received += n;
     }
     return 0;
+}
+
+/*
+ * Single non-looping read for protocols without a length prefix (e.g. HTTP
+ * over the KME channel).  Returns the number of bytes read (>0), 0 on a
+ * clean peer shutdown (WOLFSSL_ERROR_ZERO_RETURN), or -1 on a real error.
+ */
+int pqc_tls_read_some(pqc_tls_t *tls, unsigned char *buf, int max_len)
+{
+    int n = wolfSSL_read(tls->ssl, buf, max_len);
+    if (n > 0) return n;
+
+    int err = wolfSSL_get_error(tls->ssl, n);
+    if (err == WOLFSSL_ERROR_ZERO_RETURN) return 0;
+    return -1;
 }
 
 /* Copy peer certificate DER into buf.  Returns byte count, or -1 on error. */

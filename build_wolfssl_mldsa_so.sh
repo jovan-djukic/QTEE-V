@@ -1,7 +1,8 @@
 #!/bin/bash
 # build_wolfssl_mldsa_so.sh
 
-WOLFSSL_DIR=/home/dj/Desktop/wolfssl/_install_linux_shared
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+WOLFSSL_DIR="${SCRIPT_DIR}/external/wolfssl/_install_linux_shared"
 
 gcc -shared -fPIC -o libwolfssl_mldsa.so wolfssl_mldsa.c \
     -I${WOLFSSL_DIR}/include \

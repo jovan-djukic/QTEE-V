@@ -7,7 +7,7 @@ This script generates:
   - Self-signed CA certificate (standard X.509 DER, -----BEGIN CERTIFICATE-----)
 
 Requirements:
-  pip install liboqs-python
+  wolfssl_mldsa.py / libwolfssl_mldsa.so (build_wolfssl_mldsa_so.sh)
 
 Usage:
   python generate_pqc_ca.py [--output-dir ./pqc_ca] [--cn "QKD Relay PQC CA"]
@@ -25,32 +25,7 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-try:
-    import oqs
-    # === WOLFSSL SHIM ===
-    try:
-        import wolfssl_mldsa
-        _original_oqs_signature = oqs.Signature
-
-        class HybridSignature:
-            """Use WolfSSL for ML-DSA, liboqs for others."""
-            def __new__(cls, algorithm, secret_key=None):
-                if "DSA" in algorithm or "Dilithium" in algorithm:
-                    return wolfssl_mldsa.Signature(algorithm, secret_key)
-                if secret_key is not None:
-                    return _original_oqs_signature(algorithm, secret_key)
-                return _original_oqs_signature(algorithm)
-
-        oqs.Signature = HybridSignature
-        print("[*] Using WolfSSL for ML-DSA signatures")
-    except ImportError as e:
-        print(f"[*] WolfSSL ML-DSA not available ({e}), using liboqs")
-    # === END WOLFSSL SHIM ===
-except ImportError:
-    print("Error: liboqs-python not installed")
-    print("Install with: pip install liboqs-python")
-    sys.exit(1)
-
+import wolfssl_mldsa
 
 ALGORITHM = "ML-DSA-65"
 
@@ -140,7 +115,7 @@ def _read_tlv(data: bytes, pos: int):
 # ==================== Certificate builder ====================
 
 def _sign(private_key: bytes, data: bytes) -> bytes:
-    signer = oqs.Signature(ALGORITHM, private_key)
+    signer = wolfssl_mldsa.Signature(ALGORITHM, private_key)
     return signer.sign(data)
 
 def build_ca_cert_der(cn: str, public_key: bytes, private_key: bytes,
@@ -180,7 +155,7 @@ def verify_cert(cert_der: bytes, public_key: bytes) -> bool:
     _, sig_bs, _ = _read_tlv(cert_val, pos)
     signature = sig_bs[1:]                     # skip unused-bits byte
 
-    verifier = oqs.Signature(ALGORITHM)
+    verifier = wolfssl_mldsa.Signature(ALGORITHM)
     return verifier.verify(tbs_raw, signature, public_key)
 
 
@@ -206,7 +181,7 @@ def main():
     print(f"Generating ML-DSA-65 CA keypair...")
     print(f"  Algorithm: {ALGORITHM}")
 
-    signer = oqs.Signature(ALGORITHM)
+    signer = wolfssl_mldsa.Signature(ALGORITHM)
     public_key  = signer.generate_keypair()
     private_key = signer.export_secret_key()
 
@@ -262,8 +237,8 @@ def main():
     print(f"  {fingerprint[32:]}")
 
     print("\nDone!")
-    print("\nTo use with controller_hybrid.py:")
-    print(f"  python controller_hybrid.py --pqc-ca-cert {cert_path} --pqc-ca-key {key_path}")
+    print("\nTo use with controller.py:")
+    print(f"  python controller.py --pqc-ca-cert {cert_path} --pqc-ca-key {key_path}")
 
 
 if __name__ == "__main__":

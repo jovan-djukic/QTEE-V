@@ -1,15 +1,23 @@
 #!/usr/bin/env python3
 """
-QKD Relay Repetitor - Hybrid PQC/RSA Version
+QKD Relay
 
-This repetitor implements:
-1. Mutual Kyber-768 key exchange with controller
-2. PQC channel (Kyber + ML-DSA) for repetitor ↔ repetitor communication
-3. RSA-2048 mTLS for repetitor ↔ KME communication (QuKayDee)
+Every connection is WolfSSL TLS 1.3 with ML-KEM-768 as the sole configured
+key-exchange group (strict -- no classical fallback) and ML-DSA-65 X.509
+certs for signatures. Three connection types, not two:
 
-Two communication channels:
-  - PQC Channel: Custom protocol using Kyber for key exchange, ML-DSA for auth
-  - RSA Channel: Standard mTLS for KME communication
+1. Controller channel -- server-only auth (pqc_tls_client_connect_anon()):
+   the controller presents its ML-DSA-65 cert; the relay has none yet at
+   this point and is instead authenticated via HW attestation inside the
+   tunnel. Not mTLS.
+2. Relay <-> relay channel -- true mTLS (pqc_tls_client_connect()), both
+   sides present ML-DSA-65 certs signed by the Relay CA. Custom
+   length-prefixed message framing (pqc_send_message/pqc_receive_message).
+3. Relay <-> KME channel -- also true mTLS, same Relay CA identity cert
+   reused (no separate KME-facing cert), verified by the KME against a
+   copy of that same Relay CA. Hand-rolled HTTP/1.1 over the mTLS tunnel
+   (_kme_http_get()), since the KME speaks ETSI GS QKD 014 over HTTP, not
+   the relay's own message protocol.
 """
 
 import binascii
@@ -17,49 +25,18 @@ import hashlib
 import hmac
 import json
 import socket
-import ssl
 import sys
 import os
-import tempfile
 import base64
-import re
-import requests
 from typing import Tuple, Optional, Dict, Any, List
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from threading import Thread, Semaphore, Lock
 
-try:
-    import oqs
-    import wolfssl_mldsa
-except ImportError:
-    print("Error: liboqs-python not installed")
-    print("Install with: pip install liboqs-python")
-    sys.exit(1)
+import wolfssl_mldsa
 
-# Monkey-patch oqs.Signature to use WolfSSL for ML-DSA
-_original_oqs_signature = oqs.Signature
-
-class HybridSignature:
-    """Use WolfSSL for ML-DSA, liboqs for others."""
-    def __new__(cls, algorithm, secret_key=None):
-        if "DSA" in algorithm or "Dilithium" in algorithm:
-            return wolfssl_mldsa.Signature(algorithm, secret_key)
-        if secret_key is not None:
-            return _original_oqs_signature(algorithm, secret_key)
-        return _original_oqs_signature(algorithm)
-
-oqs.Signature = HybridSignature
-
-
-from cryptography import x509
-from cryptography.x509.oid import NameOID
-from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.serialization import Encoding, PrivateFormat, NoEncryption
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives import padding
-from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.backends import default_backend
-from cryptography.hazmat.primitives.asymmetric import rsa
 
 
 # ==================== Configuration ====================
@@ -68,46 +45,26 @@ HOST = "127.0.0.1"
 CONTROLLER_HOST = "127.0.0.1"
 CONTROLLER_PORT = "8000"
 CTRL_TLS_PORT = 8001       # WolfSSL TLS port — all protocol steps after CA cert fetch
-KME_PORT = "443"
+KME_PORT = "8443"  # self-hosted next-door-key-simulator proxy port (all 4 KMEs)
 
 MLDSA_ALGORITHM = "ML-DSA-65"
 
-# QKD CA certificate (for KME communication - RSA)
-QKD_CA_CERTIFICATE = """-----BEGIN CERTIFICATE-----
-MIIDbTCCAlWgAwIBAgIQCzuhkEQXTouuETnIFrtF1jANBgkqhkiG9w0BAQsFADBn
-MSwwKgYDVQQDDCNhY2N0LTI1NjMuZXRzaS1xa2QtYXBpLnF1a2F5ZGVlLmNvbTEe
-MBwGA1UECgwVUXVLYXlEZWUgYWNjb3VudCAyNTYzMRcwFQYDVQQLDA5TZXJ2ZXIg
-cm9vdCBDQTAgFw0yNTA1MjYwODMxMzlaGA8yMTI1MDUwMzA4MzEzOVowZzEsMCoG
-A1UEAwwjYWNjdC0yNTYzLmV0c2ktcWtkLWFwaS5xdWtheWRlZS5jb20xHjAcBgNV
-BAoMFVF1S2F5RGVlIGFjY291bnQgMjU2MzEXMBUGA1UECwwOU2VydmVyIHJvb3Qg
-Q0EwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQC6fv8Hp8hL7P6Rs3Zc
-X3oHL6hEXbx5hmSPLFvSIpLnF1iZepdlJtXJiq2oVZNcdtDgnYA5ugl6CGQE8v3A
-79hxrWOSSfysYryoIBBYSvaEPEN16TSKcY7+cAnSU8fu736uRhKwz2jeJw2g+4pb
-lcmsJhLq40F23Px+XkpA99DPIGHWWy2ZelcddnP1M99/l937V2AvGaM+P71NMS9a
-F/K/2iiDOiAQ3XZXVIjmsdSMHth2780U80wiAaH2PsOILMbKNLdxDLYIJa5awmXY
-1D8Dik9Ot7e0It+ZfdaXxUHBxnTj7CgajqhOvd78p2PCwMhZ61DO+5subpzhywxE
-t92/AgMBAAGjEzARMA8GA1UdEwEB/wQFMAMBAf8wDQYJKoZIhvcNAQELBQADggEB
-AAuWsi3TFKGn1H6raS0aSw6JqE5c/PUMGRTBDzmSpIUMjnaG/9Ise1SGxujAYvpm
-ahExKKFkgTuSV4GmYL1n4Yakls3sr9hbP40L2wJLus+psfGKsN+Xa3hwyFrQVyKY
-dNpIH+AIhH/nI2WKyYnhv0dE2PR/UzR3AtCum/uu8C2JnY0qnBlQ3ooOopti0+MK
-zEHJBAK2jxm9vjEgHs+zHKIxOiuCM6jmPZsG4PdBWkcf1C6Coof0kfO3vednsE/B
-0Q1c9TemcUbH6OR0kDxJFV/Alsim2wolJ722QOlBB2+m88POeSqN9JLxcj3pQe53
-wkKhllHrkuVRW7pw4wXXn8w=
------END CERTIFICATE-----"""
-
-# PQC CA certificate — pre-deployed in firmware, loaded from disk at startup.
-# NOT fetched over the network; the file must exist before the repetitor starts.
+# Relay CA certificate — pre-deployed in firmware, loaded from disk at
+# startup. NOT fetched over the network; the file must exist before the
+# relay starts. Signs the controller's cert, this relay's own identity
+# cert, and (since that same cert now doubles as the relay's SAE identity)
+# is what each KME checks a relay's client cert against.
 PQC_CA_CERT_PATH = "./pqc_ca/ca_certificate.pem"
 PQC_CA_CERTIFICATE: Optional[str] = None
 
+# KME CA certificate — NOT pre-deployed; delivered by the controller over
+# the already-authenticated TLS channel (see configuration["kme_ca_certificate"]).
+# Used to verify a KME's own server cert. The relay never has this CA's
+# private key.
+KME_CA_CERTIFICATE: Optional[str] = None
 
-# ==================== PEM Encoding/Decoding ====================
 
-def encode_pem(data: bytes, label: str) -> str:
-    b64 = base64.b64encode(data).decode('ascii')
-    lines = [b64[i:i+64] for i in range(0, len(b64), 64)]
-    return f"-----BEGIN {label}-----\n" + "\n".join(lines) + f"\n-----END {label}-----\n"
-
+# ==================== PEM Decoding ====================
 
 def decode_pem(pem_str: str, label: str) -> bytes:
     lines = pem_str.strip().split('\n')
@@ -122,23 +79,6 @@ def decode_pem(pem_str: str, label: str) -> bytes:
 
 _OID_MLDSA65 = bytes([0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x03, 0x12])
 _OID_CN      = bytes([0x55, 0x04, 0x03])
-
-
-def _enc_len(n: int) -> bytes:
-    """DER length encoding."""
-    if n < 0x80:
-        return bytes([n])
-    enc: list = []
-    tmp = n
-    while tmp > 0:
-        enc.append(tmp & 0xFF)
-        tmp >>= 8
-    enc.reverse()
-    return bytes([0x80 | len(enc)] + enc)
-
-
-def _der_tlv(tag: int, val: bytes) -> bytes:
-    return bytes([tag]) + _enc_len(len(val)) + val
 
 
 def _pkcs8_mldsa65_der(raw_key: bytes) -> bytes:
@@ -248,99 +188,40 @@ def _verify_dilithium_x509(cert_der: bytes, ca_public_key: bytes) -> bool:
 
 
 # ==================== ML-DSA Signatures ====================
+#
+# wolfssl_mldsa.c's keygen/sign both draw from a single process-wide WC_RNG
+# (g_rng) with no internal locking. All 3 relays run as threads in one
+# process (see __main__ below) and each generates its own ML-DSA-65 identity
+# keypair at startup, so unsynchronized concurrent calls race on that shared
+# RNG state -- observed as one relay's KME/relay TLS calls hanging
+# indefinitely (not erroring) after a corrupted-looking keygen. Verification
+# doesn't touch the RNG and needs no lock; keygen and signing do.
+_MLDSA_RNG_LOCK = Lock()
+
 
 def mldsa_generate_keypair() -> Tuple[bytes, bytes]:
-    signer = oqs.Signature(MLDSA_ALGORITHM)
-    public_key = signer.generate_keypair()
-    private_key = signer.export_secret_key()
+    with _MLDSA_RNG_LOCK:
+        signer = wolfssl_mldsa.Signature(MLDSA_ALGORITHM)
+        public_key = signer.generate_keypair()
+        private_key = signer.export_secret_key()
     return public_key, private_key
 
 
 def mldsa_sign(private_key: bytes, data: bytes) -> bytes:
-    signer = oqs.Signature(MLDSA_ALGORITHM, private_key)
-    return signer.sign(data)
+    with _MLDSA_RNG_LOCK:
+        signer = wolfssl_mldsa.Signature(MLDSA_ALGORITHM, private_key)
+        return signer.sign(data)
 
 
 def mldsa_verify(public_key: bytes, data: bytes, signature: bytes) -> bool:
-    verifier = oqs.Signature(MLDSA_ALGORITHM)
+    verifier = wolfssl_mldsa.Signature(MLDSA_ALGORITHM)
     return verifier.verify(data, signature, public_key)
-
-
-# ==================== RSA Key/CSR Generation (for KME) ====================
-
-def rsa_generate_keypair() -> rsa.RSAPrivateKey:
-    return rsa.generate_private_key(public_exponent=65537, key_size=2048)
-
-
-def rsa_key_to_pem(key: rsa.RSAPrivateKey) -> bytes:
-    return key.private_bytes(
-        encoding=Encoding.PEM,
-        format=PrivateFormat.TraditionalOpenSSL,
-        encryption_algorithm=NoEncryption()
-    )
-
-
-def rsa_create_csr(key: rsa.RSAPrivateKey, common_name: str) -> str:
-    csr = (
-        x509.CertificateSigningRequestBuilder()
-        .subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, common_name)]))
-        .add_extension(
-            x509.SubjectAlternativeName([x509.DNSName(common_name)]),
-            critical=False,
-        )
-        .sign(key, hashes.SHA256())
-    )
-    return csr.public_bytes(serialization.Encoding.PEM).decode()
-
-
-def derive_session_key(shared_secret: bytes, context: str = "pqc-channel-v1") -> bytes:
-    """Derive session key for PQC channel using HKDF (matches C implementation)."""
-    hkdf = HKDF(
-        algorithm=hashes.SHA256(),
-        length=32,
-        salt=None,
-        info=context.encode(),
-        backend=default_backend()
-    )
-    result = hkdf.derive(shared_secret)
-    # Debug output
-    print(f"[DEBUG] derive_session_key:")
-    print(f"  shared_secret (first 16 bytes): {shared_secret[:16].hex()}")
-    print(f"  session_key (first 16 bytes): {result[:16].hex()}")
-    return result
-
-
-def aes_encrypt_bytes(plaintext: bytes, key: bytes) -> bytes:
-    """Encrypt bytes with AES-256-CBC, returns IV + ciphertext."""
-    iv = os.urandom(16)
-    cipher = Cipher(algorithms.AES(key), modes.CBC(iv), backend=default_backend())
-    encryptor = cipher.encryptor()
-    
-    padder = padding.PKCS7(128).padder()
-    padded = padder.update(plaintext) + padder.finalize()
-    
-    ciphertext = encryptor.update(padded) + encryptor.finalize()
-    return iv + ciphertext
-
-
-def aes_decrypt_bytes(data: bytes, key: bytes) -> bytes:
-    """Decrypt AES-256-CBC from IV + ciphertext."""
-    iv = data[:16]
-    ciphertext = data[16:]
-    
-    cipher = Cipher(algorithms.AES(key), modes.CBC(iv), backend=default_backend())
-    decryptor = cipher.decryptor()
-    
-    padded = decryptor.update(ciphertext) + decryptor.finalize()
-    
-    unpadder = padding.PKCS7(128).unpadder()
-    return unpadder.update(padded) + unpadder.finalize()
 
 
 # ==================== Attestation ====================
 
-def get_attestation_report(nonce: str, repetitor_id: str) -> str:
-    data = nonce.encode() + repetitor_id.encode()
+def get_attestation_report(nonce: str, relay_id: str) -> str:
+    data = nonce.encode() + relay_id.encode()
     report_hash = hashlib.sha256(data).hexdigest()
     return f"attestation_report:{report_hash}"
 
@@ -376,19 +257,12 @@ def verify_pqc_certificate(cert_pem: str, ca_cert_pem: str) -> Tuple[bool, str, 
         return False, "", b""
 
 
-def extract_public_key_from_cert(cert_pem: str) -> bytes:
-    """Extract ML-DSA public key from an X.509 Dilithium certificate."""
-    cert_der = decode_pem(cert_pem, "CERTIFICATE")
-    _, public_key, _, _, _ = _parse_x509_cert(cert_der)
-    return public_key
-
-
 # ==================== Secure Configuration Protocol ====================
 
-def get_configuration_hybrid(
+def get_configuration(
     controller_host: str,
-    repetitor_id: str,
-    repetitor_url: str
+    relay_id: str,
+    relay_ip: str
 ) -> Dict[str, Any]:
     """Get configuration over WolfSSL TLS.
 
@@ -414,7 +288,7 @@ def get_configuration_hybrid(
             print(f"[DEBUG] Sending register...")
             conn.sendmsg(json.dumps({
                 "action": "register",
-                "data": {"repetitor_id": repetitor_id, "repetitor_url": repetitor_url}
+                "data": {"relay_id": relay_id, "relay_ip": relay_ip, "platform": "native"}
             }).encode())
 
             reg_data = json.loads(conn.recvmsg())
@@ -423,12 +297,12 @@ def get_configuration_hybrid(
             nonce = reg_data["nonce"]
             print(f"[DEBUG] Received nonce={nonce}")
 
-            # ── Step 2: Attest — SHA256(nonce_hex + repetitor_id) ────────────
-            attestation_report = get_attestation_report(nonce, repetitor_id)
+            # ── Step 2: Attest — SHA256(nonce_hex + relay_id) ────────────
+            attestation_report = get_attestation_report(nonce, relay_id)
             print(f"[DEBUG] Sending attest...")
             conn.sendmsg(json.dumps({
                 "action": "attest",
-                "data": {"repetitor_id": repetitor_id, "attestation_report": attestation_report}
+                "data": {"relay_id": relay_id, "attestation_report": attestation_report}
             }).encode())
 
             attest_data = json.loads(conn.recvmsg())
@@ -438,11 +312,11 @@ def get_configuration_hybrid(
                 raise RuntimeError("Authentication failed")
             print(f"[DEBUG] Authenticated with controller")
 
-            # ── Step 3: Configuration (blocks until all repetitors ready) ─────
+            # ── Step 3: Configuration (blocks until all relays ready) ─────
             print(f"[DEBUG] Requesting configuration...")
             conn.sendmsg(json.dumps({
                 "action": "configuration",
-                "data": {"repetitor_id": repetitor_id}
+                "data": {"relay_id": relay_id}
             }).encode())
 
             configuration = json.loads(conn.recvmsg())
@@ -450,65 +324,45 @@ def get_configuration_hybrid(
                 raise RuntimeError(f"Configuration failed: {configuration['error']}")
             print(f"[DEBUG] Received configuration")
 
-            global PQC_CA_CERTIFICATE
+            global PQC_CA_CERTIFICATE, KME_CA_CERTIFICATE
             PQC_CA_CERTIFICATE = ca_pem   # already loaded from pre-deployed file
+            KME_CA_CERTIFICATE = configuration.get("kme_ca_certificate", "")
 
-            # ── Step 4: Generate keys and request certificates ────────────────
-            print(f"[DEBUG] Generating ML-DSA-65 keypair for repetitor identity...")
+            # ── Step 4: Generate identity keypair and request a certificate ───
+            # This one ML-DSA-65 cert (Relay CA-signed) is used everywhere:
+            # relay <-> relay mTLS, and now relay <-> KME auth too (the KME
+            # trusts it via the Relay CA cert the controller handed it).
+            print(f"[DEBUG] Generating ML-DSA-65 keypair for relay identity...")
             pqc_pk, pqc_sk = mldsa_generate_keypair()
 
-            left_rsa_key  = None
-            right_rsa_key = None
-            left_rsa_csr  = ""
-            right_rsa_csr = ""
-
-            left_cn  = configuration.get("left_cn", "")
-            right_cn = configuration.get("right_cn", "")
-
-            if left_cn and left_cn != "test_client":
-                print(f"[DEBUG] Generating RSA keypair for left KME ({left_cn})...")
-                left_rsa_key = rsa_generate_keypair()
-                left_rsa_csr = rsa_create_csr(left_rsa_key, left_cn)
-
-            if right_cn and right_cn != "test_client":
-                print(f"[DEBUG] Generating RSA keypair for right KME ({right_cn})...")
-                right_rsa_key = rsa_generate_keypair()
-                right_rsa_csr = rsa_create_csr(right_rsa_key, right_cn)
-
-            print(f"[DEBUG] Requesting certificates...")
+            print(f"[DEBUG] Requesting certificate...")
             conn.sendmsg(json.dumps({
                 "action": "generate_certificates",
                 "data": {
-                    "repetitor_id": repetitor_id,
+                    "relay_id": relay_id,
                     "pqc_csr": {
-                        "subject_cn": repetitor_id,
+                        "subject_cn": relay_id,
                         "public_key": base64.b64encode(pqc_pk).decode()
-                    },
-                    "left_rsa_csr":  left_rsa_csr.replace("\n", "\\n")  if left_rsa_csr  else "",
-                    "right_rsa_csr": right_rsa_csr.replace("\n", "\\n") if right_rsa_csr else ""
+                    }
                 }
             }).encode())
 
             certificates = json.loads(conn.recvmsg())
             if "error" in certificates:
                 raise RuntimeError(f"Certificate generation failed: {certificates['error']}")
-            print(f"[DEBUG] Received certificates")
+            print(f"[DEBUG] Received certificate")
 
             return {
                 "configuration": configuration,
                 "pqc_private_key": pqc_sk,
                 "pqc_public_key":  pqc_pk,
-                "pqc_certificate": certificates["pqc_certificate"],
-                "left_rsa_key":          left_rsa_key,
-                "left_rsa_certificate":  certificates.get("left_rsa_certificate", ""),
-                "right_rsa_key":         right_rsa_key,
-                "right_rsa_certificate": certificates.get("right_rsa_certificate", "")
+                "pqc_certificate": certificates["pqc_certificate"]
             }
     finally:
         sock.close()
 
 
-# ==================== PQC Channel (Repetitor to Repetitor via WolfSSL mTLS) ====================
+# ==================== PQC Channel (Relay to Relay via WolfSSL mTLS) ====================
 
 def pqc_send_message(
     host: str,
@@ -517,9 +371,9 @@ def pqc_send_message(
     my_certificate: str,
     ca_certificate: str,
     message: dict,
-    repetitor_id: str
+    relay_id: str
 ):
-    """Send message to another repetitor using PQC mTLS (WolfSSL ML-DSA-65)."""
+    """Send message to another relay via mTLS (WolfSSL TLS 1.3, ML-KEM-768 KEX, ML-DSA-65 certs)."""
     cert_der  = decode_pem(my_certificate, "CERTIFICATE")
     pkcs8_der = _pkcs8_mldsa65_der(my_private_key)
     ca_der    = decode_pem(ca_certificate, "CERTIFICATE")
@@ -530,11 +384,11 @@ def pqc_send_message(
 
         with wolfssl_mldsa.pqc_tls_client_connect(sock.fileno(), cert_der, pkcs8_der, ca_der) as conn:
             peer_cn, _, _, _, _ = _parse_x509_cert(conn.peer_cert_der())
-            print(f"[{datetime.now():%H:%M:%S}][{repetitor_id}] PQC mTLS connected to {peer_cn} at {host}:{port}")
+            print(f"[{datetime.now():%H:%M:%S}][{relay_id}] PQC mTLS connected to {peer_cn} at {host}:{port}")
 
             conn.sendmsg(json.dumps(message).encode())
             ack = conn.recvmsg()
-            print(f"[{datetime.now():%H:%M:%S}][{repetitor_id}] Received ack: {ack.decode()}")
+            print(f"[{datetime.now():%H:%M:%S}][{relay_id}] Received ack: {ack.decode()}")
 
 
 def pqc_receive_message(
@@ -544,9 +398,9 @@ def pqc_receive_message(
     my_certificate: str,
     ca_certificate: str,
     whitelist: List[str],
-    repetitor_id: str
+    relay_id: str
 ) -> Tuple[str, dict]:
-    """Receive message from another repetitor using PQC mTLS (WolfSSL ML-DSA-65)."""
+    """Receive message to another relay via mTLS (WolfSSL TLS 1.3, ML-KEM-768 KEX, ML-DSA-65 certs)."""
     cert_der  = decode_pem(my_certificate, "CERTIFICATE")
     pkcs8_der = _pkcs8_mldsa65_der(my_private_key)
     ca_der    = decode_pem(ca_certificate, "CERTIFICATE")
@@ -556,7 +410,7 @@ def pqc_receive_message(
         server_sock.bind((host, port))
         server_sock.listen(5)
 
-        print(f"[{datetime.now():%H:%M:%S}][{repetitor_id}] PQC mTLS listener on {host}:{port}")
+        print(f"[{datetime.now():%H:%M:%S}][{relay_id}] PQC mTLS listener on {host}:{port}")
 
         conn_sock, addr = server_sock.accept()
         conn_sock.settimeout(30)
@@ -568,7 +422,7 @@ def pqc_receive_message(
                 if whitelist and peer_cn not in whitelist:
                     raise ValueError(f"Client {peer_cn} not in whitelist")
 
-                print(f"[{datetime.now():%H:%M:%S}][{repetitor_id}] PQC mTLS connection from {peer_cn} at {addr}")
+                print(f"[{datetime.now():%H:%M:%S}][{relay_id}] PQC mTLS connection from {peer_cn} at {addr}")
 
                 message = json.loads(conn.recvmsg().decode())
                 conn.sendmsg(b"RECEIVED")
@@ -578,48 +432,83 @@ def pqc_receive_message(
             conn_sock.close()
 
 
-# ==================== KME Communication (RSA-based) ====================
+# ==================== KME Communication (mTLS, ML-KEM-768 + ML-DSA-65) ====================
+#
+# The KME (next-door-key-simulator) speaks plain HTTP/1.1 over a WolfSSL
+# mTLS tunnel (TLS 1.3, ML-KEM-768 KEX, ML-DSA-65 certs), not TLS terminated
+# by Python's ssl module (which cannot handle ML-DSA-65 certs or ML-KEM-768).
+# We open the raw TCP socket ourselves, hand it to wolfssl_mldsa's mTLS
+# client, and speak HTTP by hand — same idiom the relay already uses for
+# relay-to-relay PQC messaging.
+
+class _KmeHttpResponse:
+    """Minimal stand-in for requests.Response — just enough for the callers."""
+    def __init__(self, status_code: int, body: bytes):
+        self.status_code = status_code
+        self._body = body
+
+    def json(self):
+        return json.loads(self._body.decode())
+
+
+def _split_host_port(host_port: str, default_port: str) -> Tuple[str, str]:
+    """Split "host:port" (controller.py's LINKS entries) into (host, port).
+    Falls back to default_port if no ":" is present (bare host)."""
+    if not host_port:
+        return "", default_port
+    if ":" in host_port:
+        host, port = host_port.rsplit(":", 1)
+        return host, port
+    return host_port, default_port
+
+
+def _kme_http_get(
+    private_key: bytes,
+    certificate: str,
+    ca_certificate: str,
+    kme_host: str,
+    kme_port: str,
+    path: str
+) -> _KmeHttpResponse:
+    """Issue an HTTP GET to a KME over mTLS (ML-KEM-768 + ML-DSA-65) and return the response."""
+    cert_der = decode_pem(certificate, "CERTIFICATE")
+    ca_der = decode_pem(ca_certificate, "CERTIFICATE")
+    pkcs8_der = _pkcs8_mldsa65_der(private_key)
+
+    sock = socket.create_connection((kme_host, int(kme_port)), timeout=30)
+    try:
+        with wolfssl_mldsa.pqc_tls_client_connect(sock.fileno(), cert_der, pkcs8_der, ca_der) as conn:
+            request = (
+                f"GET {path} HTTP/1.1\r\n"
+                f"Host: {kme_host}\r\n"
+                f"Connection: close\r\n\r\n"
+            ).encode()
+            conn.send(request)
+            raw = conn.recv_until_close()
+    finally:
+        sock.close()
+
+    header_blob, _, body = raw.partition(b"\r\n\r\n")
+    status_line = header_blob.split(b"\r\n", 1)[0].decode()
+    status_code = int(status_line.split(" ")[1])
+    return _KmeHttpResponse(status_code, body)
+
 
 def kme_get_status(
-    private_key: rsa.RSAPrivateKey,
+    private_key: bytes,
     certificate: str,
     ca_certificate: str,
     kme_host: str,
     kme_port: str,
     kme_slave: str
 ):
-    """Get status from KME using RSA mTLS."""
-    url = f"https://{kme_host}:{kme_port}/api/v1/keys/{kme_slave}/status"
-    
-    key_pem = rsa_key_to_pem(private_key)
-    
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.crt', delete=False) as cert_file, \
-         tempfile.NamedTemporaryFile(mode='wb', suffix='.key', delete=False) as key_file, \
-         tempfile.NamedTemporaryFile(mode='w', suffix='.crt', delete=False) as ca_file:
-        
-        cert_file.write(certificate)
-        cert_file.flush()
-        key_file.write(key_pem)
-        key_file.flush()
-        ca_file.write(ca_certificate)
-        ca_file.flush()
-        
-        try:
-            response = requests.get(
-                url=url,
-                cert=(cert_file.name, key_file.name),
-                verify=ca_file.name,
-                timeout=30
-            )
-            return response
-        finally:
-            os.unlink(cert_file.name)
-            os.unlink(key_file.name)
-            os.unlink(ca_file.name)
+    """Get status from KME."""
+    return _kme_http_get(private_key, certificate, ca_certificate, kme_host, kme_port,
+                          f"/api/v1/keys/{kme_slave}/status")
 
 
 def kme_get_key(
-    private_key: rsa.RSAPrivateKey,
+    private_key: bytes,
     certificate: str,
     ca_certificate: str,
     kme_host: str,
@@ -627,37 +516,12 @@ def kme_get_key(
     kme_slave: str
 ):
     """Get encryption key from KME."""
-    url = f"https://{kme_host}:{kme_port}/api/v1/keys/{kme_slave}/enc_keys"
-    
-    key_pem = rsa_key_to_pem(private_key)
-    
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.crt', delete=False) as cert_file, \
-         tempfile.NamedTemporaryFile(mode='wb', suffix='.key', delete=False) as key_file, \
-         tempfile.NamedTemporaryFile(mode='w', suffix='.crt', delete=False) as ca_file:
-        
-        cert_file.write(certificate)
-        cert_file.flush()
-        key_file.write(key_pem)
-        key_file.flush()
-        ca_file.write(ca_certificate)
-        ca_file.flush()
-        
-        try:
-            response = requests.get(
-                url=url,
-                cert=(cert_file.name, key_file.name),
-                verify=ca_file.name,
-                timeout=30
-            )
-            return response.json()
-        finally:
-            os.unlink(cert_file.name)
-            os.unlink(key_file.name)
-            os.unlink(ca_file.name)
+    return _kme_http_get(private_key, certificate, ca_certificate, kme_host, kme_port,
+                          f"/api/v1/keys/{kme_slave}/enc_keys").json()
 
 
 def kme_get_key_with_id(
-    private_key: rsa.RSAPrivateKey,
+    private_key: bytes,
     certificate: str,
     ca_certificate: str,
     kme_host: str,
@@ -666,33 +530,8 @@ def kme_get_key_with_id(
     key_id: str
 ):
     """Get decryption key from KME by ID."""
-    url = f"https://{kme_host}:{kme_port}/api/v1/keys/{kme_master}/dec_keys?key_ID={key_id}"
-    
-    key_pem = rsa_key_to_pem(private_key)
-    
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.crt', delete=False) as cert_file, \
-         tempfile.NamedTemporaryFile(mode='wb', suffix='.key', delete=False) as key_file, \
-         tempfile.NamedTemporaryFile(mode='w', suffix='.crt', delete=False) as ca_file:
-        
-        cert_file.write(certificate)
-        cert_file.flush()
-        key_file.write(key_pem)
-        key_file.flush()
-        ca_file.write(ca_certificate)
-        ca_file.flush()
-        
-        try:
-            response = requests.get(
-                url=url,
-                cert=(cert_file.name, key_file.name),
-                verify=ca_file.name,
-                timeout=30
-            )
-            return response.json()
-        finally:
-            os.unlink(cert_file.name)
-            os.unlink(key_file.name)
-            os.unlink(ca_file.name)
+    return _kme_http_get(private_key, certificate, ca_certificate, kme_host, kme_port,
+                          f"/api/v1/keys/{kme_master}/dec_keys?key_ID={key_id}").json()
 
 
 # ==================== QKD Message Encryption/Decryption ====================
@@ -771,85 +610,86 @@ def qkd_decrypt(blob_base64: str, key_text: str) -> str:
 
 # ==================== Main ====================
 
-def main(repetitor_id: str, port: int, print_semaphore: Semaphore) -> None:
-    """Main function for repetitor."""
+def main(relay_id: str, port: int, print_semaphore: Semaphore) -> None:
+    """Main function for relay."""
     
-    # Get configuration using hybrid PQC/RSA protocol
-    result = get_configuration_hybrid(
+    # Get configuration from the controller (all ML-DSA-65 PQC)
+    result = get_configuration(
         CONTROLLER_HOST,
-        repetitor_id,
+        relay_id,
         f"127.0.0.1:{port}"
     )
     
     configuration = result["configuration"]
     
     print_semaphore.acquire()
-    print(f"\n[{datetime.now():%H:%M:%S}][{repetitor_id}] Configuration received:")
+    print(f"\n[{datetime.now():%H:%M:%S}][{relay_id}] Configuration received:")
     print(json.dumps({k: v for k, v in configuration.items() if k != "pqc_ca_certificate"}, indent=2))
     print_semaphore.release()
     
-    # PQC credentials (for repetitor-to-repetitor)
+    # PQC credentials -- one identity cert, used for relay-to-relay mTLS
+    # AND relay-to-KME auth (the KME verifies it against a copy of the
+    # Relay CA the controller handed it; see KME_CA_CERTIFICATE).
     pqc_sk = result["pqc_private_key"]
     pqc_pk = result["pqc_public_key"]
     pqc_cert = result["pqc_certificate"]
-    
-    # RSA credentials (for KME)
-    left_rsa_key = result["left_rsa_key"]
-    left_rsa_cert = result["left_rsa_certificate"]
-    right_rsa_key = result["right_rsa_key"]
-    right_rsa_cert = result["right_rsa_certificate"]
-    
-    # Extract configuration values
+
+    # Extract configuration values. left_kme/right_kme carry "host:port" (see
+    # controller.py's LINKS) since the 4 KME containers map to different host
+    # ports rather than sharing one -- split out here instead of using a
+    # fixed KME_PORT.
     left_kme = configuration.get("left_kme", "")
     right_kme = configuration.get("right_kme", "")
+    left_kme_host, left_kme_port = _split_host_port(left_kme, KME_PORT)
+    right_kme_host, right_kme_port = _split_host_port(right_kme, KME_PORT)
     left_kme_peer = configuration.get("left_kme_peer", "")
     right_kme_peer = configuration.get("right_kme_peer", "")
     whitelist = [item.strip() for item in configuration.get("whitelist", "").split("|") if item.strip()]
     
-    left_repetitor_url = configuration.get("left_repetitor_url", "")
-    right_repetitor_url = configuration.get("right_repetitor_url", "")
-    left_repetitor_id = configuration.get("left_repetitor_id", "")
-    right_repetitor_id = configuration.get("right_repetitor_id", "")
+    left_relay_ip = configuration.get("left_relay_ip", "")
+    right_relay_ip = configuration.get("right_relay_ip", "")
+    left_relay_id = configuration.get("left_relay_id", "")
+    right_relay_id = configuration.get("right_relay_id", "")
     
     # Determine position
     position = "left" if not left_kme else ("right" if not right_kme else "middle")
     
     print_semaphore.acquire()
-    print(f"[{datetime.now():%H:%M:%S}][{repetitor_id}] Position: {position}")
-    print(f"[{datetime.now():%H:%M:%S}][{repetitor_id}] Whitelist: {whitelist}")
-    print(f"[{datetime.now():%H:%M:%S}][{repetitor_id}] Left neighbor: {left_repetitor_id} at {left_repetitor_url}")
-    print(f"[{datetime.now():%H:%M:%S}][{repetitor_id}] Right neighbor: {right_repetitor_id} at {right_repetitor_url}")
+    print(f"[{datetime.now():%H:%M:%S}][{relay_id}] Position: {position}")
+    print(f"[{datetime.now():%H:%M:%S}][{relay_id}] Whitelist: {whitelist}")
+    print(f"[{datetime.now():%H:%M:%S}][{relay_id}] Left neighbor: {left_relay_id} at {left_relay_ip}")
+    print(f"[{datetime.now():%H:%M:%S}][{relay_id}] Right neighbor: {right_relay_id} at {right_relay_ip}")
     print_semaphore.release()
     
     # Verify PQC CA certificate
     if PQC_CA_CERTIFICATE:
         valid, cn, _ = verify_pqc_certificate(pqc_cert, PQC_CA_CERTIFICATE)
         print_semaphore.acquire()
-        print(f"[{datetime.now():%H:%M:%S}][{repetitor_id}] PQC certificate verification: {'✓' if valid else '✗'} (CN={cn})")
+        print(f"[{datetime.now():%H:%M:%S}][{relay_id}] PQC certificate verification: {'✓' if valid else '✗'} (CN={cn})")
         print_semaphore.release()
     
-    # Test KME connectivity
-    if left_kme and left_rsa_key and left_rsa_cert:
+    # Test KME connectivity (using this relay's own identity cert as its SAE cert)
+    if left_kme:
         print_semaphore.acquire()
-        print(f"[{datetime.now():%H:%M:%S}][{repetitor_id}] Testing left KME ({left_kme})...")
+        print(f"[{datetime.now():%H:%M:%S}][{relay_id}] Testing left KME ({left_kme})...")
         try:
-            status = kme_get_status(left_rsa_key, left_rsa_cert, QKD_CA_CERTIFICATE, left_kme, KME_PORT, left_kme_peer)
-            print(f"[{datetime.now():%H:%M:%S}][{repetitor_id}] Left KME status: {status.status_code}")
+            status = kme_get_status(pqc_sk, pqc_cert, KME_CA_CERTIFICATE, left_kme_host, left_kme_port, left_kme_peer)
+            print(f"[{datetime.now():%H:%M:%S}][{relay_id}] Left KME status: {status.status_code}")
         except Exception as e:
-            print(f"[{datetime.now():%H:%M:%S}][{repetitor_id}] Left KME error: {e}")
+            print(f"[{datetime.now():%H:%M:%S}][{relay_id}] Left KME error: {e}")
         print_semaphore.release()
-    
-    if right_kme and right_rsa_key and right_rsa_cert:
+
+    if right_kme:
         print_semaphore.acquire()
-        print(f"[{datetime.now():%H:%M:%S}][{repetitor_id}] Testing right KME ({right_kme})...")
+        print(f"[{datetime.now():%H:%M:%S}][{relay_id}] Testing right KME ({right_kme})...")
         try:
-            status = kme_get_status(right_rsa_key, right_rsa_cert, QKD_CA_CERTIFICATE, right_kme, KME_PORT, right_kme_peer)
-            print(f"[{datetime.now():%H:%M:%S}][{repetitor_id}] Right KME status: {status.status_code}")
+            status = kme_get_status(pqc_sk, pqc_cert, KME_CA_CERTIFICATE, right_kme_host, right_kme_port, right_kme_peer)
+            print(f"[{datetime.now():%H:%M:%S}][{relay_id}] Right KME status: {status.status_code}")
         except Exception as e:
-            print(f"[{datetime.now():%H:%M:%S}][{repetitor_id}] Right KME error: {e}")
+            print(f"[{datetime.now():%H:%M:%S}][{relay_id}] Right KME error: {e}")
         print_semaphore.release()
     
-    print(f"[{datetime.now():%H:%M:%S}][{repetitor_id}] Ready - entering message relay loop")
+    print(f"[{datetime.now():%H:%M:%S}][{relay_id}] Ready - entering message relay loop")
     
     # ==================== Main Message Relay Loop ====================
     while True:
@@ -862,72 +702,73 @@ def main(repetitor_id: str, port: int, print_semaphore: Semaphore) -> None:
                 my_certificate=pqc_cert,
                 ca_certificate=PQC_CA_CERTIFICATE,
                 whitelist=whitelist,
-                repetitor_id=repetitor_id
+                relay_id=relay_id
             )
             
             print_semaphore.acquire()
-            print(f"[{datetime.now():%H:%M:%S}][{repetitor_id}] Received message from {sender_cn}")
+            print(f"[{datetime.now():%H:%M:%S}][{relay_id}] Received message from {sender_cn}")
             print_semaphore.release()
             
             # Determine direction (from left or right)
-            is_from_left = (sender_cn == left_repetitor_id)
+            is_from_left = (sender_cn == left_relay_id)
             
-            # Get KME info for decryption (incoming direction)
+            # Get KME info for decryption (incoming direction) -- this
+            # relay's own identity cert doubles as its SAE cert everywhere
             kme_decrypt = left_kme if is_from_left else right_kme
+            kme_decrypt_host = left_kme_host if is_from_left else right_kme_host
+            kme_decrypt_port = left_kme_port if is_from_left else right_kme_port
             kme_decrypt_peer = left_kme_peer if is_from_left else right_kme_peer
-            kme_decrypt_key = left_rsa_key if is_from_left else right_rsa_key
-            kme_decrypt_cert = left_rsa_cert if is_from_left else right_rsa_cert
-            
+
             # Get KME info for encryption (outgoing direction)
             kme_encrypt = right_kme if is_from_left else left_kme
+            kme_encrypt_host = right_kme_host if is_from_left else left_kme_host
+            kme_encrypt_port = right_kme_port if is_from_left else left_kme_port
             kme_encrypt_peer = right_kme_peer if is_from_left else left_kme_peer
-            kme_encrypt_key = right_rsa_key if is_from_left else left_rsa_key
-            kme_encrypt_cert = right_rsa_cert if is_from_left else left_rsa_cert
-            
+
             # Get next hop info
-            to_url = right_repetitor_url if is_from_left else left_repetitor_url
+            to_ip = right_relay_ip if is_from_left else left_relay_ip
             
             # Extract message content
             from_ciphertext = from_message.get("message", "")
             from_key_id = from_message.get("key_ID", "")
             
             # Decrypt incoming message (if we have a KME on that side)
-            if kme_decrypt and kme_decrypt_key and kme_decrypt_cert and from_key_id:
-                print(f"[{datetime.now():%H:%M:%S}][{repetitor_id}] Getting decryption key from KME {kme_decrypt}...")
+            if kme_decrypt and from_key_id:
+                print(f"[{datetime.now():%H:%M:%S}][{relay_id}] Getting decryption key from KME {kme_decrypt}...")
                 get_key_response = kme_get_key_with_id(
-                    private_key=kme_decrypt_key,
-                    certificate=kme_decrypt_cert,
-                    ca_certificate=QKD_CA_CERTIFICATE,
-                    kme_host=kme_decrypt,
-                    kme_port=KME_PORT,
+                    private_key=pqc_sk,
+                    certificate=pqc_cert,
+                    ca_certificate=KME_CA_CERTIFICATE,
+                    kme_host=kme_decrypt_host,
+                    kme_port=kme_decrypt_port,
                     kme_master=kme_decrypt_peer,
                     key_id=from_key_id
                 )
                 from_key = get_key_response["keys"][0]["key"]
-                print(f"[{datetime.now():%H:%M:%S}][{repetitor_id}] Decrypting with QKD key...")
+                print(f"[{datetime.now():%H:%M:%S}][{relay_id}] Decrypting with QKD key...")
                 plaintext = qkd_decrypt(from_ciphertext, from_key)
             else:
                 # No KME on incoming side (we're at an edge)
                 plaintext = from_ciphertext
             
             print_semaphore.acquire()
-            print(f"[{datetime.now():%H:%M:%S}][{repetitor_id}] Plaintext: {plaintext[:100]}...")
+            print(f"[{datetime.now():%H:%M:%S}][{relay_id}] Plaintext: {plaintext[:100]}...")
             print_semaphore.release()
             
             # Encrypt for outgoing (if we have a KME on that side)
-            if kme_encrypt and kme_encrypt_key and kme_encrypt_cert:
-                print(f"[{datetime.now():%H:%M:%S}][{repetitor_id}] Getting encryption key from KME {kme_encrypt}...")
+            if kme_encrypt:
+                print(f"[{datetime.now():%H:%M:%S}][{relay_id}] Getting encryption key from KME {kme_encrypt}...")
                 get_key_response = kme_get_key(
-                    private_key=kme_encrypt_key,
-                    certificate=kme_encrypt_cert,
-                    ca_certificate=QKD_CA_CERTIFICATE,
-                    kme_host=kme_encrypt,
-                    kme_port=KME_PORT,
+                    private_key=pqc_sk,
+                    certificate=pqc_cert,
+                    ca_certificate=KME_CA_CERTIFICATE,
+                    kme_host=kme_encrypt_host,
+                    kme_port=kme_encrypt_port,
                     kme_slave=kme_encrypt_peer
                 )
                 to_key_id = get_key_response["keys"][0]["key_ID"]
                 to_key = get_key_response["keys"][0]["key"]
-                print(f"[{datetime.now():%H:%M:%S}][{repetitor_id}] Encrypting with QKD key...")
+                print(f"[{datetime.now():%H:%M:%S}][{relay_id}] Encrypting with QKD key...")
                 to_ciphertext = qkd_encrypt(plaintext, to_key)
             else:
                 # No KME on outgoing side (we're at an edge)
@@ -937,8 +778,8 @@ def main(repetitor_id: str, port: int, print_semaphore: Semaphore) -> None:
             to_message = {"message": to_ciphertext, "key_ID": to_key_id}
             
             # Forward to next hop via PQC channel
-            to_host, to_port = to_url.split(":")
-            print(f"[{datetime.now():%H:%M:%S}][{repetitor_id}] Forwarding to {to_url}...")
+            to_host, to_port = to_ip.split(":")
+            print(f"[{datetime.now():%H:%M:%S}][{relay_id}] Forwarding to {to_ip}...")
             
             try:
                 pqc_send_message(
@@ -948,17 +789,17 @@ def main(repetitor_id: str, port: int, print_semaphore: Semaphore) -> None:
                     my_certificate=pqc_cert,
                     ca_certificate=PQC_CA_CERTIFICATE,
                     message=to_message,
-                    repetitor_id=repetitor_id
+                    relay_id=relay_id
                 )
-                print(f"[{datetime.now():%H:%M:%S}][{repetitor_id}] Message forwarded successfully")
+                print(f"[{datetime.now():%H:%M:%S}][{relay_id}] Message forwarded successfully")
             except Exception as e:
                 print_semaphore.acquire()
-                print(f"[{datetime.now():%H:%M:%S}][{repetitor_id}] Error forwarding: {e}")
+                print(f"[{datetime.now():%H:%M:%S}][{relay_id}] Error forwarding: {e}")
                 print_semaphore.release()
                 
         except Exception as e:
             print_semaphore.acquire()
-            print(f"[{datetime.now():%H:%M:%S}][{repetitor_id}] Error in relay loop: {e}")
+            print(f"[{datetime.now():%H:%M:%S}][{relay_id}] Error in relay loop: {e}")
             print_semaphore.release()
             import traceback
             traceback.print_exc()
@@ -967,14 +808,14 @@ def main(repetitor_id: str, port: int, print_semaphore: Semaphore) -> None:
 if __name__ == "__main__":
     print_semaphore = Semaphore(1)
     
-    repetitor_indices = [0, 1, 2]
+    relay_indices = [0, 1, 2]
     
     if len(sys.argv) > 1:
-        repetitor_indices = [int(arg) for arg in sys.argv[1:]]
+        relay_indices = [int(arg) for arg in sys.argv[1:]]
     
-    for i in repetitor_indices:
+    for i in relay_indices:
         thread = Thread(
             target=main,
-            args=(f"DR{i}", 9000 + i, print_semaphore)
+            args=(f"R{i}", 9000 + i, print_semaphore)
         )
         thread.start()

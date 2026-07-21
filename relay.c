@@ -1,23 +1,17 @@
 /*
- * QKD Relay Repetitor - Hybrid PQC/RSA Version (WolfSSL-only mTLS)
- *
- * Based on eapp_hybrid.c. Key changes:
- *   - liboqs dependency removed; WolfSSL handles ML-KEM, ML-DSA, and TLS
- *   - PQC channel (old manual Kyber+ML-DSA handshake) replaced with WolfSSL mTLS
- *   - PQC certificates are now standard X.509 DER (-----BEGIN CERTIFICATE-----)
- *   - verify_pqc_certificate replaced with X.509 DER parser + WolfSSL ML-DSA verify
+ * QKD Relay (WolfSSL mTLS)
  *
  * ============================================================================
  * BUILD INSTRUCTIONS
  * ============================================================================
  *
- *   gcc -o eapp_final eapp_final.c \
- *       -I/home/dj/Desktop/wolfssl/_install_linux/include \
- *       -L/home/dj/Desktop/wolfssl/_install_linux/lib \
+ *   gcc -o relay relay.c \
+ *       -Iexternal/wolfssl/_install_linux_shared/include \
+ *       -Lexternal/wolfssl/_install_linux_shared/lib \
  *       -lwolfssl -lm -lpthread
  *
- *   export LD_LIBRARY_PATH=/home/dj/Desktop/wolfssl/_install_linux/lib
- *   ./eapp_final DR1 9001
+ *   export LD_LIBRARY_PATH=external/wolfssl/_install_linux_shared/lib
+ *   ./relay R1 9001
  *
  * ============================================================================
  */
@@ -26,7 +20,6 @@
 #include <wolfssl/ssl.h>
 #include <wolfssl/wolfcrypt/settings.h>
 #include <wolfssl/wolfcrypt/types.h>
-#include <wolfssl/wolfcrypt/rsa.h>
 #include <wolfssl/wolfcrypt/asn_public.h>
 #include <wolfssl/wolfcrypt/sha256.h>
 #include <wolfssl/wolfcrypt/hmac.h>
@@ -35,7 +28,6 @@
 #include <wolfssl/wolfcrypt/coding.h>
 #include <wolfssl/wolfcrypt/random.h>
 #include <wolfssl/wolfcrypt/error-crypt.h>
-#include <wolfssl/wolfcrypt/wc_mlkem.h>
 #include <wolfssl/wolfcrypt/dilithium.h>
 
 #include <stdio.h>
@@ -54,15 +46,7 @@
 
 /* ==================== Constants ==================== */
 
-#define SYMMETRIC_KEY_SIZE      32
-#define AES_IV_SIZE             16
 #define AES_BLOCK_SIZE          16
-
-/* ML-KEM-768 (Kyber768) sizes */
-#define MLKEM768_PUBLIC_KEY_SIZE    1184
-#define MLKEM768_SECRET_KEY_SIZE    2400
-#define MLKEM768_CIPHERTEXT_SIZE    1088
-#define MLKEM768_SHARED_SECRET_SIZE 32
 
 /* ML-DSA-65 (Dilithium3) sizes */
 #define MLDSA65_PUBLIC_KEY_SIZE     1952
@@ -81,185 +65,167 @@
 
 /* ==================== CA Certificates ==================== */
 
-const char *QKD_CA_CERTIFICATE = "-----BEGIN CERTIFICATE-----\n"
-"MIIDbTCCAlWgAwIBAgIQCzuhkEQXTouuETnIFrtF1jANBgkqhkiG9w0BAQsFADBn\n"
-"MSwwKgYDVQQDDCNhY2N0LTI1NjMuZXRzaS1xa2QtYXBpLnF1a2F5ZGVlLmNvbTEe\n"
-"MBwGA1UECgwVUXVLYXlEZWUgYWNjb3VudCAyNTYzMRcwFQYDVQQLDA5TZXJ2ZXIg\n"
-"cm9vdCBDQTAgFw0yNTA1MjYwODMxMzlaGA8yMTI1MDUwMzA4MzEzOVowZzEsMCoG\n"
-"A1UEAwwjYWNjdC0yNTYzLmV0c2ktcWtkLWFwaS5xdWtheWRlZS5jb20xHjAcBgNV\n"
-"BAoMFVF1S2F5RGVlIGFjY291bnQgMjU2MzEXMBUGA1UECwwOU2VydmVyIHJvb3Qg\n"
-"Q0EwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQC6fv8Hp8hL7P6Rs3Zc\n"
-"X3oHL6hEXbx5hmSPLFvSIpLnF1iZepdlJtXJiq2oVZNcdtDgnYA5ugl6CGQE8v3A\n"
-"79hxrWOSSfysYryoIBBYSvaEPEN16TSKcY7+cAnSU8fu736uRhKwz2jeJw2g+4pb\n"
-"lcmsJhLq40F23Px+XkpA99DPIGHWWy2ZelcddnP1M99/l937V2AvGaM+P71NMS9a\n"
-"F/K/2iiDOiAQ3XZXVIjmsdSMHth2780U80wiAaH2PsOILMbKNLdxDLYIJa5awmXY\n"
-"1D8Dik9Ot7e0It+ZfdaXxUHBxnTj7CgajqhOvd78p2PCwMhZ61DO+5subpzhywxE\n"
-"t92/AgMBAAGjEzARMA8GA1UdEwEB/wQFMAMBAf8wDQYJKoZIhvcNAQELBQADggEB\n"
-"AAuWsi3TFKGn1H6raS0aSw6JqE5c/PUMGRTBDzmSpIUMjnaG/9Ise1SGxujAYvpm\n"
-"ahExKKFkgTuSV4GmYL1n4Yakls3sr9hbP40L2wJLus+psfGKsN+Xa3hwyFrQVyKY\n"
-"dNpIH+AIhH/nI2WKyYnhv0dE2PR/UzR3AtCum/uu8C2JnY0qnBlQ3ooOopti0+MK\n"
-"zEHJBAK2jxm9vjEgHs+zHKIxOiuCM6jmPZsG4PdBWkcf1C6Coof0kfO3vednsE/B\n"
-"0Q1c9TemcUbH6OR0kDxJFV/Alsim2wolJ722QOlBB2+m88POeSqN9JLxcj3pQe53\n"
-"wkKhllHrkuVRW7pw4wXXn8w=\n"
-"-----END CERTIFICATE-----";
-
 /* PQC CA certificate — pre-deployed in firmware (hardcoded at compile time).
    NOT fetched over the network; identical to ./pqc_ca/ca_certificate.pem. */
 const char *PQC_CA_CERTIFICATE =
 "-----BEGIN CERTIFICATE-----\n"
-"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\n"
-"AAAAAAAFCxEaISc=\n"
+"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\n"
+"AAAAAAAABAoRFx4k\n"
 "-----END CERTIFICATE-----";
 
+#ifdef RISC_V_ATTESTATION
+const char *CONTROLLER_HOST = "192.168.100.2";
+#define RELAY_PLATFORM "riscv"
+#else
 const char *CONTROLLER_HOST = "127.0.0.1";
-// const char *CONTROLLER_HOST = "192.168.100.2";
+#define RELAY_PLATFORM "native"
+#endif
+
 const char *CONTROLLER_PORT = "8000";
-const char *KME_PORT = "443";
 
 static volatile int keep_running = 1;
 
 /* ==================== Data Structures ==================== */
 
 typedef struct {
-    char *left_repetitor_url;
-    char *right_repetitor_url;
-    char *left_repetitor_id;
-    char *right_repetitor_id;
+    char *left_relay_ip;
+    char *right_relay_ip;
+    char *left_relay_id;
+    char *right_relay_id;
     char *left_kme;
     char *right_kme;
-    char *left_kme_url;   /* IP address for left KME (avoids gethostbyname / futex) */
-    char *right_kme_url;  /* IP address for right KME */
+    char *left_kme_ip;   /* IP address for left KME (avoids gethostbyname / futex) */
+    char *right_kme_ip;  /* IP address for right KME */
     char *left_cn;
     char *right_cn;
     char *left_kme_peer;
     char *right_kme_peer;
     char *whitelist;
 
-    /* PQC credentials */
+    /* PQC credentials -- one identity cert, used for relay-to-relay mTLS
+     * AND relay-to-KME auth (the KME verifies it against a copy of the
+     * Relay CA the controller handed it; see kme_ca_certificate below). */
     unsigned char pqc_private_key[MLDSA65_SECRET_KEY_SIZE];
     unsigned char pqc_public_key[MLDSA65_PUBLIC_KEY_SIZE];
     char *pqc_certificate;
 
-    /* RSA credentials for KME */
-    unsigned char *left_rsa_key_der;
-    int left_rsa_key_der_len;
-    char *left_rsa_cert;
-    unsigned char *right_rsa_key_der;
-    int right_rsa_key_der_len;
-    char *right_rsa_cert;
-} repetitor_config_t;
+    /* KME CA certificate -- NOT pre-deployed; delivered by the controller
+     * over the already-authenticated TLS channel. Verifies a KME's own
+     * server cert. This relay never has the KME CA's private key. */
+    char *kme_ca_certificate;
+} relay_config_t;
 
 typedef struct {
     char *message;
@@ -272,6 +238,10 @@ static int g_rng_initialized = 0;
 
 static int x509_verify_cert(const unsigned char *cert_der, int cert_len,
                              const unsigned char *ca_pk);
+static WOLFSSL_CTX *pqc_make_tls_ctx(int is_server,
+    const unsigned char *cert_der, int cert_len,
+    const unsigned char *pkcs8_key, int key_len,
+    const unsigned char *ca_der, int ca_len);
 
 /* ==================== DER Parser ==================== */
 
@@ -485,6 +455,19 @@ static int _pqc_verify_accept_all(int preverify_ok, WOLFSSL_X509_STORE_CTX *ctx)
 {
     (void)preverify_ok; (void)ctx;
     return 1;
+}
+
+/*
+ * Restrict the TLS 1.3 key-exchange group to pure ML-KEM-768 -- strict PQC,
+ * no classical fallback. A peer that doesn't support ML-KEM-768 simply
+ * fails the handshake rather than silently negotiating a classical group.
+ * Independent of ML-DSA-65 (certificate signatures, handled separately
+ * above) -- this only affects how the session key is derived.
+ */
+static int _pqc_set_mlkem_group(WOLFSSL_CTX *ctx)
+{
+    int groups[1] = { WOLFSSL_ML_KEM_768 };
+    return wolfSSL_CTX_set_groups(ctx, groups, 1);
 }
 
 static int _pqc_verify_peer(WOLFSSL *ssl,
@@ -757,38 +740,6 @@ int hex_to_bytes(const char *hex, unsigned char *bytes, size_t max_len) {
     return (int)(hex_len / 2);
 }
 
-char *certificate_json_escape(const char *str) {
-    if (!str) return strdup("");
-
-    size_t len = 0;
-    for (const char *p = str; *p; p++) {
-        switch (*p) {
-            case '"': case '\\': case '\n': case '\r': case '\t':
-                len += 2;
-                break;
-            default:
-                len += 1;
-        }
-    }
-
-    char *escaped = malloc(len + 1);
-    if (!escaped) return NULL;
-
-    char *out = escaped;
-    for (const char *p = str; *p; p++) {
-        switch (*p) {
-            case '"':  *out++ = '\\'; *out++ = '"';  break;
-            case '\\': *out++ = '\\'; *out++ = '\\'; break;
-            case '\n': *out++ = '\\'; *out++ = 'n';  break;
-            case '\r': *out++ = '\\'; *out++ = 'r';  break;
-            case '\t': *out++ = '\\'; *out++ = 't';  break;
-            default:   *out++ = *p;
-        }
-    }
-    *out = '\0';
-    return escaped;
-}
-
 void parse_url(const char *url, char *host, int *port) {
     const char *colon = strchr(url, ':');
     if (colon) {
@@ -818,177 +769,6 @@ static int pkcs7_unpad(unsigned char *data, int data_len) {
         if (data[data_len - 1 - i] != pad_len) return -1;
     }
     return data_len - pad_len;
-}
-
-char *aes_encrypt_string(const char *plaintext, const unsigned char *key) {
-    unsigned char iv[AES_IV_SIZE];
-    if (random_bytes(iv, AES_IV_SIZE) != 0) return NULL;
-
-    int pt_len = strlen(plaintext);
-    int padded_len = pt_len + (AES_BLOCK_SIZE - (pt_len % AES_BLOCK_SIZE));
-
-    unsigned char *padded = calloc(padded_len, 1);
-    if (!padded) return NULL;
-    memcpy(padded, plaintext, pt_len);
-    pkcs7_pad(padded, pt_len, AES_BLOCK_SIZE);
-
-    unsigned char *ciphertext = malloc(padded_len);
-    if (!ciphertext) { free(padded); return NULL; }
-
-    Aes aes;
-    wc_AesInit(&aes, NULL, INVALID_DEVID);
-    wc_AesSetKey(&aes, key, SYMMETRIC_KEY_SIZE, iv, AES_ENCRYPTION);
-    wc_AesCbcEncrypt(&aes, ciphertext, padded, padded_len);
-    wc_AesFree(&aes);
-    free(padded);
-
-    int combined_len = AES_IV_SIZE + padded_len;
-    unsigned char *combined = malloc(combined_len);
-    memcpy(combined, iv, AES_IV_SIZE);
-    memcpy(combined + AES_IV_SIZE, ciphertext, padded_len);
-    free(ciphertext);
-
-    char *result = base64_encode(combined, combined_len);
-    free(combined);
-    return result;
-}
-
-char *aes_decrypt_string(const char *ciphertext_b64, const unsigned char *key) {
-    size_t combined_len;
-    unsigned char *combined = base64_decode(ciphertext_b64, &combined_len);
-    if (!combined || combined_len < AES_IV_SIZE + AES_BLOCK_SIZE) {
-        free(combined); return NULL;
-    }
-
-    unsigned char *iv = combined;
-    unsigned char *ciphertext = combined + AES_IV_SIZE;
-    int ct_len = combined_len - AES_IV_SIZE;
-
-    unsigned char *plaintext = malloc(ct_len + 1);
-    if (!plaintext) { free(combined); return NULL; }
-
-    Aes aes;
-    wc_AesInit(&aes, NULL, INVALID_DEVID);
-    wc_AesSetKey(&aes, key, SYMMETRIC_KEY_SIZE, iv, AES_DECRYPTION);
-    wc_AesCbcDecrypt(&aes, plaintext, ciphertext, ct_len);
-    wc_AesFree(&aes);
-    free(combined);
-
-    int unpadded_len = pkcs7_unpad(plaintext, ct_len);
-    if (unpadded_len < 0) { free(plaintext); return NULL; }
-
-    plaintext[unpadded_len] = '\0';
-    return (char*)plaintext;
-}
-
-int aes_encrypt_bytes(const unsigned char *plaintext, int pt_len,
-                      const unsigned char *key, unsigned char *output, int *out_len) {
-    unsigned char iv[AES_IV_SIZE];
-    if (random_bytes(iv, AES_IV_SIZE) != 0) return -1;
-
-    int padded_len = pt_len + (AES_BLOCK_SIZE - (pt_len % AES_BLOCK_SIZE));
-    unsigned char *padded = calloc(padded_len, 1);
-    if (!padded) return -1;
-    memcpy(padded, plaintext, pt_len);
-    pkcs7_pad(padded, pt_len, AES_BLOCK_SIZE);
-
-    Aes aes;
-    wc_AesInit(&aes, NULL, INVALID_DEVID);
-    wc_AesSetKey(&aes, key, SYMMETRIC_KEY_SIZE, iv, AES_ENCRYPTION);
-    memcpy(output, iv, AES_IV_SIZE);
-    wc_AesCbcEncrypt(&aes, output + AES_IV_SIZE, padded, padded_len);
-    wc_AesFree(&aes);
-    free(padded);
-
-    *out_len = AES_IV_SIZE + padded_len;
-    return 0;
-}
-
-int aes_decrypt_bytes(const unsigned char *input, int in_len,
-                      const unsigned char *key, unsigned char *output, int *out_len) {
-    if (in_len < AES_IV_SIZE + AES_BLOCK_SIZE) return -1;
-
-    const unsigned char *iv = input;
-    const unsigned char *ciphertext = input + AES_IV_SIZE;
-    int ct_len = in_len - AES_IV_SIZE;
-
-    Aes aes;
-    wc_AesInit(&aes, NULL, INVALID_DEVID);
-    wc_AesSetKey(&aes, key, SYMMETRIC_KEY_SIZE, iv, AES_DECRYPTION);
-    wc_AesCbcDecrypt(&aes, output, ciphertext, ct_len);
-    wc_AesFree(&aes);
-
-    int unpadded = pkcs7_unpad(output, ct_len);
-    if (unpadded < 0) return -1;
-    *out_len = unpadded;
-    return 0;
-}
-
-/* ==================== ML-KEM-768 (Kyber) Functions ==================== */
-
-int pqc_mlkem_generate_keypair(unsigned char *pk, unsigned char *sk) {
-    MlKemKey key;
-    int ret;
-
-    ret = wc_MlKemKey_Init(&key, WC_ML_KEM_768, NULL, INVALID_DEVID);
-    if (ret != 0) {
-        fprintf(stderr, "[ERROR] wc_MlKemKey_Init failed: %d (%s)\n", ret, wc_GetErrorString(ret));
-        return ret;
-    }
-
-    ret = wc_MlKemKey_MakeKey(&key, &g_rng);
-    if (ret != 0) {
-        fprintf(stderr, "[ERROR] wc_MlKemKey_MakeKey failed: %d (%s)\n", ret, wc_GetErrorString(ret));
-        wc_MlKemKey_Free(&key);
-        return ret;
-    }
-
-    word32 pk_len = MLKEM768_PUBLIC_KEY_SIZE;
-    ret = wc_MlKemKey_EncodePublicKey(&key, pk, pk_len);
-    if (ret != 0) {
-        fprintf(stderr, "[ERROR] wc_MlKemKey_EncodePublicKey failed: %d (%s)\n", ret, wc_GetErrorString(ret));
-        wc_MlKemKey_Free(&key);
-        return ret;
-    }
-
-    word32 sk_len = MLKEM768_SECRET_KEY_SIZE;
-    ret = wc_MlKemKey_EncodePrivateKey(&key, sk, sk_len);
-    if (ret != 0) {
-        fprintf(stderr, "[ERROR] wc_MlKemKey_EncodePrivateKey failed: %d (%s)\n", ret, wc_GetErrorString(ret));
-    }
-
-    wc_MlKemKey_Free(&key);
-    return ret;
-}
-
-int pqc_mlkem_encapsulate(const unsigned char *pk, unsigned char *ct, unsigned char *ss) {
-    MlKemKey key;
-    int ret;
-
-    ret = wc_MlKemKey_Init(&key, WC_ML_KEM_768, NULL, INVALID_DEVID);
-    if (ret != 0) return ret;
-
-    ret = wc_MlKemKey_DecodePublicKey(&key, pk, MLKEM768_PUBLIC_KEY_SIZE);
-    if (ret != 0) { wc_MlKemKey_Free(&key); return ret; }
-
-    ret = wc_MlKemKey_Encapsulate(&key, ct, ss, &g_rng);
-    wc_MlKemKey_Free(&key);
-    return ret;
-}
-
-int pqc_mlkem_decapsulate(const unsigned char *sk, const unsigned char *ct, unsigned char *ss) {
-    MlKemKey key;
-    int ret;
-
-    ret = wc_MlKemKey_Init(&key, WC_ML_KEM_768, NULL, INVALID_DEVID);
-    if (ret != 0) return ret;
-
-    ret = wc_MlKemKey_DecodePrivateKey(&key, sk, MLKEM768_SECRET_KEY_SIZE);
-    if (ret != 0) { wc_MlKemKey_Free(&key); return ret; }
-
-    ret = wc_MlKemKey_Decapsulate(&key, ss, ct, MLKEM768_CIPHERTEXT_SIZE);
-    wc_MlKemKey_Free(&key);
-    return ret;
 }
 
 /* ==================== ML-DSA-65 (Dilithium) Functions - WolfSSL ==================== */
@@ -1061,108 +841,6 @@ int pqc_mldsa_verify(const unsigned char *pk, const unsigned char *msg, int msg_
 
     if (ret != 0) { fprintf(stderr, "[ERROR] wc_dilithium_verify_msg failed: %d\n", ret); return -1; }
     return (verified == 1) ? 0 : -1;
-}
-
-/* ==================== Key Derivation ==================== */
-
-void derive_shared_key(const unsigned char *ss1, const unsigned char *ss2,
-                       unsigned char *out_key) {
-    unsigned char combined[64];
-    memcpy(combined, ss1, MLKEM768_SHARED_SECRET_SIZE);
-    memcpy(combined + MLKEM768_SHARED_SECRET_SIZE, ss2, MLKEM768_SHARED_SECRET_SIZE);
-
-    const char *info = "qkd-relay-v1";
-    unsigned char zero_salt[32] = {0};
-
-    int ret = wc_HKDF(
-        WC_SHA256,
-        combined,
-        sizeof(combined),
-        zero_salt,
-        sizeof(zero_salt),
-        (const unsigned char*)info,
-        strlen(info),
-        out_key,
-        32
-    );
-
-    if (ret != 0) {
-        fprintf(stderr, "[ERROR] wc_HKDF failed: %d (%s)\n", ret, wc_GetErrorString(ret));
-    }
-}
-
-/* ==================== RSA Key Generation ==================== */
-
-int rsa_generate_keypair(unsigned char **der_out, int *der_len) {
-    RsaKey key;
-    int ret = wc_InitRsaKey(&key, NULL);
-    if (ret != 0) return ret;
-
-    ret = wc_MakeRsaKey(&key, 2048, 65537, &g_rng);
-    if (ret != 0) { wc_FreeRsaKey(&key); return ret; }
-
-    int estSize = wc_RsaKeyToDer(&key, NULL, 0);
-    if (estSize < 0) { wc_FreeRsaKey(&key); return estSize; }
-
-    unsigned char *der = malloc(estSize);
-    if (!der) { wc_FreeRsaKey(&key); return -1; }
-
-    *der_len = wc_RsaKeyToDer(&key, der, estSize);
-    wc_FreeRsaKey(&key);
-
-    if (*der_len < 0) { free(der); return *der_len; }
-
-    *der_out = der;
-    return 0;
-}
-
-char *rsa_create_csr(const unsigned char *key_der, int key_der_len, const char *cn) {
-    RsaKey key;
-    int ret = wc_InitRsaKey(&key, NULL);
-    if (ret != 0) return NULL;
-
-    word32 idx = 0;
-    ret = wc_RsaPrivateKeyDecode(key_der, &idx, &key, key_der_len);
-    if (ret != 0) { wc_FreeRsaKey(&key); return NULL; }
-
-    Cert req;
-    wc_InitCert(&req);
-    strncpy(req.subject.commonName, cn, CTC_NAME_SIZE - 1);
-    req.sigType = CTC_SHA256wRSA;
-
-    unsigned char der[4096];
-    int derSz = wc_MakeCertReq(&req, der, sizeof(der), &key, NULL);
-    if (derSz < 0) { wc_FreeRsaKey(&key); return NULL; }
-
-    derSz = wc_SignCert(req.bodySz, req.sigType, der, sizeof(der), &key, NULL, &g_rng);
-    wc_FreeRsaKey(&key);
-    if (derSz < 0) return NULL;
-
-    int pemSz = wc_DerToPem(der, derSz, NULL, 0, CERTREQ_TYPE);
-    if (pemSz < 0) return NULL;
-
-    char *pem = malloc(pemSz + 1);
-    if (!pem) return NULL;
-
-    pemSz = wc_DerToPem(der, derSz, (byte*)pem, pemSz, CERTREQ_TYPE);
-    if (pemSz < 0) { free(pem); return NULL; }
-
-    pem[pemSz] = '\0';
-    return pem;
-}
-
-char *rsa_key_to_pem(const unsigned char *der, int der_len) {
-    int pemSz = wc_DerToPem(der, der_len, NULL, 0, PRIVATEKEY_TYPE);
-    if (pemSz < 0) return NULL;
-
-    char *pem = malloc(pemSz + 1);
-    if (!pem) return NULL;
-
-    pemSz = wc_DerToPem(der, der_len, (byte*)pem, pemSz, PRIVATEKEY_TYPE);
-    if (pemSz < 0) { free(pem); return NULL; }
-
-    pem[pemSz] = '\0';
-    return pem;
 }
 
 /* ==================== TCP/HTTP Functions ==================== */
@@ -1426,14 +1104,92 @@ static int verify_pqc_certificate_x509(const char *cert_pem, const char *ca_cert
 
 /* ==================== Attestation ==================== */
 
-char *get_attestation_report(const char *nonce, const char *repetitor_id) {
+#ifdef RISC_V_ATTESTATION
+#define SYSCALL(which, arg0, arg1, arg2, arg3, arg4)           \
+  ({                                                           \
+    register uintptr_t a0 asm("a0") = (uintptr_t)(arg0);       \
+    register uintptr_t a1 asm("a1") = (uintptr_t)(arg1);       \
+    register uintptr_t a2 asm("a2") = (uintptr_t)(arg2);       \
+    register uintptr_t a3 asm("a3") = (uintptr_t)(arg3);       \
+    register uintptr_t a4 asm("a4") = (uintptr_t)(arg4);       \
+    register uintptr_t a7 asm("a7") = (uintptr_t)(which);      \
+    asm volatile("ecall"                                       \
+                 : "+r"(a0)                                    \
+                 : "r"(a1), "r"(a2), "r"(a3), "r"(a4), "r"(a7) \
+                 : "memory");                                  \
+    a0;                                                        \
+  })
+
+#define SYSCALL_3(which, arg0, arg1, arg2) \
+  SYSCALL(which, arg0, arg1, arg2, 0, 0)
+
+#define RUNTIME_SYSCALL_ATTEST_ENCLAVE      1003
+
+int attest_enclave(void* report, void* data, size_t size) {
+  return SYSCALL_3(RUNTIME_SYSCALL_ATTEST_ENCLAVE, report, data, size);
+}
+
+#define ATTESTATION_REPORT_SIZE 2048
+
+/* Must match the Keystone SM's ATTEST_DATA_MAXLEN (sm/src/enclave.h) -- the
+ * eapp side doesn't link against SM-internal headers, so this is a local
+ * copy of that constraint, not a shared #include. */
+#define ATTEST_DATA_MAXLEN 1024
+
+char *get_attestation_report(const char *nonce, const char *relay_id) {
+    char *report = calloc ( ATTESTATION_REPORT_SIZE + 1, sizeof ( char ) );
+    if ( report == NULL ) {
+        fprintf ( stderr, "[ERROR] Failed to allocate memory for attestation report\n" );
+        return NULL;
+    }
+
+    /* Bind relay_id and nonce into the attested data (matches protocol.pv's
+     * att_payload = (rid, nonce, meas(rid)) -- meas(rid) is automatic, every
+     * report already includes the enclave hash via attest_enclave() itself;
+     * relay_id and nonce both have to be supplied explicitly here, since the
+     * "data" field is a flat caller-supplied buffer, not a structured one). */
+    char data[ATTEST_DATA_MAXLEN];
+    int data_len = snprintf(data, sizeof(data), "%s:%s", relay_id, nonce);
+    if (data_len < 0 || (size_t)data_len >= sizeof(data)) {
+        fprintf(stderr, "[ERROR] Attestation data (relay_id + nonce) too long\n");
+        free(report);
+        return NULL;
+    }
+
+    if (attest_enclave((void*)report, data, (size_t)data_len) != 0) {
+        fprintf(stderr, "[ERROR] attest_enclave syscall failed\n");
+        free(report);
+        return NULL;
+    }
+
+    /* attest_enclave() fills `report` with the raw binary Keystone report
+     * (SM hash/public key/signature, enclave hash/signature, our data field)
+     * -- it is NOT text, and can contain any byte value 0x00-0xFF. The old
+     * code null-terminated it and returned it as if it were a C string,
+     * which then got embedded via %s into the JSON attest message: any
+     * non-ASCII/non-UTF-8 byte in the report corrupts the message (observed
+     * on the controller as "'utf-8' codec can't decode byte 0x8d..."), and
+     * an embedded '"' or '\\' byte would corrupt the JSON syntax itself.
+     * base64 it instead so it's always JSON/UTF-8-safe on the wire. */
+    char *encoded = base64_encode((unsigned char*)report, ATTESTATION_REPORT_SIZE);
+    free(report);
+    if (!encoded) {
+        fprintf(stderr, "[ERROR] base64_encode of attestation report failed\n");
+        return NULL;
+    }
+    return encoded;
+}
+
+#else
+
+char *get_attestation_report(const char *nonce, const char *relay_id) {
     wc_Sha256 sha;
     unsigned char hash[32];
     char hash_hex[65];
 
     wc_InitSha256(&sha);
     wc_Sha256Update(&sha, (unsigned char*)nonce, strlen(nonce));
-    wc_Sha256Update(&sha, (unsigned char*)repetitor_id, strlen(repetitor_id));
+    wc_Sha256Update(&sha, (unsigned char*)relay_id, strlen(relay_id));
     wc_Sha256Final(&sha, hash);
     wc_Sha256Free(&sha);
 
@@ -1443,6 +1199,7 @@ char *get_attestation_report(const char *nonce, const char *repetitor_id) {
     sprintf(report, "attestation_report:%s", hash_hex);
     return report;
 }
+#endif
 
 /* ==================== Controller TLS Context ==================== */
 
@@ -1461,6 +1218,12 @@ static WOLFSSL_CTX *ctrl_make_tls_ctx(const unsigned char *ca_der, int ca_len)
         return NULL;
     }
 
+    if (_pqc_set_mlkem_group(ctx) != WOLFSSL_SUCCESS) {
+        fprintf(stderr, "[ERROR] ctrl_make_tls_ctx: set_groups (ML-KEM-768) failed\n");
+        wolfSSL_CTX_free(ctx);
+        return NULL;
+    }
+
     if (wolfSSL_CTX_load_verify_buffer(ctx, ca_der, ca_len,
                                         WOLFSSL_FILETYPE_ASN1) != WOLFSSL_SUCCESS) {
         fprintf(stderr, "[ERROR] ctrl_make_tls_ctx: load_verify_buffer failed\n");
@@ -1474,9 +1237,9 @@ static WOLFSSL_CTX *ctrl_make_tls_ctx(const unsigned char *ca_der, int ca_len)
 
 /* ==================== Controller Configuration Protocol ==================== */
 
-int get_configuration_hybrid(const char *controller_host, int controller_port,
-                             const char *repetitor_id, const char *repetitor_url,
-                             repetitor_config_t *config) {
+int get_configuration(const char *controller_host, int controller_port,
+                             const char *relay_id, const char *relay_ip,
+                             relay_config_t *config) {
     /* Declare TLS handles up-front so fail_tls can always clean up. */
     WOLFSSL_CTX *ctrl_ctx = NULL;
     WOLFSSL     *ssl      = NULL;
@@ -1533,8 +1296,8 @@ int get_configuration_hybrid(const char *controller_host, int controller_port,
         char *reg_req = malloc(512);
         snprintf(reg_req, 512,
                  "{\"action\":\"register\",\"data\":"
-                 "{\"repetitor_id\":\"%s\",\"repetitor_url\":\"%s\"}}",
-                 repetitor_id, repetitor_url);
+                 "{\"relay_id\":\"%s\",\"relay_ip\":\"%s\",\"platform\":\"%s\"}}",
+                 relay_id, relay_ip, RELAY_PLATFORM);
 
         fprintf(stderr, "[DEBUG] Sending register...\n");
         int ok = tls_send_msg(ssl, (unsigned char *)reg_req, (int)strlen(reg_req));
@@ -1557,16 +1320,22 @@ int get_configuration_hybrid(const char *controller_host, int controller_port,
     }
     fprintf(stderr, "[DEBUG] Received nonce=%s\n", nonce);
 
-    /* ── Step 2: Attest — SHA256(nonce_hex + repetitor_id) ───────────────── */
+    /* ── Step 2: Attest — SHA256(nonce_hex + relay_id) ───────────────── */
     {
-        char *attestation_report = get_attestation_report(nonce, repetitor_id);
+        char *attestation_report = get_attestation_report(nonce, relay_id);
         free(nonce);
 
-        char *attest_req = malloc(512);
-        snprintf(attest_req, 512,
+        if (!attestation_report) {
+            fprintf(stderr, "[ERROR] Failed to generate attestation report\n");
+            goto fail_tls;
+        }
+
+        size_t attest_req_size = strlen(relay_id) + strlen(attestation_report) + 128;
+        char *attest_req = malloc(attest_req_size);
+        snprintf(attest_req, attest_req_size,
                  "{\"action\":\"attest\",\"data\":"
-                 "{\"repetitor_id\":\"%s\",\"attestation_report\":\"%s\"}}",
-                 repetitor_id, attestation_report);
+                 "{\"relay_id\":\"%s\",\"attestation_report\":\"%s\"}}",
+                 relay_id, attestation_report);
         free(attestation_report);
 
         fprintf(stderr, "[DEBUG] Sending attest...\n");
@@ -1597,8 +1366,8 @@ int get_configuration_hybrid(const char *controller_host, int controller_port,
         char *cfg_req = malloc(256);
         snprintf(cfg_req, 256,
                  "{\"action\":\"configuration\",\"data\":"
-                 "{\"repetitor_id\":\"%s\"}}",
-                 repetitor_id);
+                 "{\"relay_id\":\"%s\"}}",
+                 relay_id);
         int ok = tls_send_msg(ssl, (unsigned char *)cfg_req, (int)strlen(cfg_req));
         free(cfg_req);
         if (ok != 0) {
@@ -1615,24 +1384,28 @@ int get_configuration_hybrid(const char *controller_host, int controller_port,
         char *config_json = cfg_resp;  /* response IS the configuration JSON */
         fprintf(stderr, "[DEBUG] Received configuration\n");
 
-        config->left_repetitor_url  = extract_json_string(config_json, "left_repetitor_url");
-        config->right_repetitor_url = extract_json_string(config_json, "right_repetitor_url");
-        config->left_repetitor_id   = extract_json_string(config_json, "left_repetitor_id");
-        config->right_repetitor_id  = extract_json_string(config_json, "right_repetitor_id");
+        config->left_relay_ip  = extract_json_string(config_json, "left_relay_ip");
+        config->right_relay_ip = extract_json_string(config_json, "right_relay_ip");
+        config->left_relay_id   = extract_json_string(config_json, "left_relay_id");
+        config->right_relay_id  = extract_json_string(config_json, "right_relay_id");
         config->left_kme            = extract_json_string(config_json, "left_kme");
         config->right_kme           = extract_json_string(config_json, "right_kme");
-        config->left_kme_url        = extract_json_string(config_json, "left_kme_url");
-        config->right_kme_url       = extract_json_string(config_json, "right_kme_url");
+        config->left_kme_ip        = extract_json_string(config_json, "left_kme_ip");
+        config->right_kme_ip       = extract_json_string(config_json, "right_kme_ip");
         config->left_cn             = extract_json_string(config_json, "left_cn");
         config->right_cn            = extract_json_string(config_json, "right_cn");
         config->left_kme_peer       = extract_json_string(config_json, "left_kme_peer");
         config->right_kme_peer      = extract_json_string(config_json, "right_kme_peer");
         config->whitelist           = extract_json_string(config_json, "whitelist");
+        config->kme_ca_certificate  = extract_json_string(config_json, "kme_ca_certificate");
 
         free(config_json);
     }
 
-    /* ── Step 4: Generate ML-DSA keys and request certificates ───────────── */
+    /* ── Step 4: Generate an identity keypair and request a certificate ───
+     * This one ML-DSA-65 cert (Relay CA-signed) is used everywhere: relay
+     * <-> relay mTLS, and now relay <-> KME auth too (the KME trusts it via
+     * the Relay CA cert the controller handed it in kme_ca_certificate). */
     fprintf(stderr, "[DEBUG] Generating ML-DSA-65 keypair...\n");
     if (pqc_mldsa_generate_keypair(config->pqc_public_key, config->pqc_private_key) != 0) {
         fprintf(stderr, "[ERROR] Failed to generate ML-DSA keypair\n");
@@ -1643,41 +1416,15 @@ int get_configuration_hybrid(const char *controller_host, int controller_port,
     {
         char *pqc_pk_b64 = base64_encode(config->pqc_public_key, MLDSA65_PUBLIC_KEY_SIZE);
 
-        char *left_rsa_csr = NULL, *right_rsa_csr = NULL;
-        char *left_rsa_esc = NULL, *right_rsa_esc = NULL;
-        int has_left  = config->left_cn  && strlen(config->left_cn)
-                        && strcmp(config->left_cn,  "test_client") != 0;
-        int has_right = config->right_cn && strlen(config->right_cn)
-                        && strcmp(config->right_cn, "test_client") != 0;
-
-        if (has_left) {
-            rsa_generate_keypair(&config->left_rsa_key_der, &config->left_rsa_key_der_len);
-            left_rsa_csr = rsa_create_csr(config->left_rsa_key_der,
-                                          config->left_rsa_key_der_len, config->left_cn);
-            left_rsa_esc = certificate_json_escape(left_rsa_csr);
-        }
-        if (has_right) {
-            rsa_generate_keypair(&config->right_rsa_key_der, &config->right_rsa_key_der_len);
-            right_rsa_csr = rsa_create_csr(config->right_rsa_key_der,
-                                           config->right_rsa_key_der_len, config->right_cn);
-            right_rsa_esc = certificate_json_escape(right_rsa_csr);
-        }
-
         char *cert_req_msg = malloc(MAX_JSON_SIZE);
         snprintf(cert_req_msg, MAX_JSON_SIZE,
                  "{\"action\":\"generate_certificates\",\"data\":"
-                 "{\"repetitor_id\":\"%s\","
-                 "\"pqc_csr\":{\"subject_cn\":\"%s\",\"public_key\":\"%s\"},"
-                 "\"left_rsa_csr\":\"%s\","
-                 "\"right_rsa_csr\":\"%s\"}}",
-                 repetitor_id, repetitor_id, pqc_pk_b64,
-                 left_rsa_esc  ? left_rsa_esc  : "",
-                 right_rsa_esc ? right_rsa_esc : "");
+                 "{\"relay_id\":\"%s\","
+                 "\"pqc_csr\":{\"subject_cn\":\"%s\",\"public_key\":\"%s\"}}}",
+                 relay_id, relay_id, pqc_pk_b64);
         free(pqc_pk_b64);
-        if (has_left)  { free(left_rsa_csr);  free(left_rsa_esc);  }
-        if (has_right) { free(right_rsa_csr); free(right_rsa_esc); }
 
-        fprintf(stderr, "[DEBUG] Requesting certificates...\n");
+        fprintf(stderr, "[DEBUG] Requesting certificate...\n");
         int ok = tls_send_msg(ssl, (unsigned char *)cert_req_msg, (int)strlen(cert_req_msg));
         free(cert_req_msg);
         if (ok != 0) {
@@ -1695,11 +1442,9 @@ int get_configuration_hybrid(const char *controller_host, int controller_port,
 
     {
         char *certs_json = cert_resp;  /* response IS the certs JSON */
-        fprintf(stderr, "[DEBUG] Received certificates\n");
+        fprintf(stderr, "[DEBUG] Received certificate\n");
 
         config->pqc_certificate = extract_json_string(certs_json, "pqc_certificate");
-        config->left_rsa_cert   = extract_json_string(certs_json, "left_rsa_certificate");
-        config->right_rsa_cert  = extract_json_string(certs_json, "right_rsa_certificate");
         free(certs_json);
     }
 
@@ -1716,47 +1461,50 @@ fail_tls:
     return -1;
 }
 
-/* ==================== KME Communication (mTLS) ==================== */
+/* ==================== KME Communication (ML-DSA-65 mTLS) ==================== */
 
-char *kme_request(const unsigned char *key_der, int key_der_len,
+char *kme_request(const unsigned char *sae_sk,
                   const char *cert_pem, const char *ca_pem,
                   const char *kme_host, const char *kme_ip, int kme_port,
                   const char *path) {
     /* kme_ip is the numeric IP address used for tcp_connect() to avoid
      * gethostbyname() which triggers futex/pthreads in Keystone enclaves.
-     * kme_host is still used for TLS SNI and the HTTP Host header. */
+     * kme_host is still used for the HTTP Host header. */
     const char *connect_addr = (kme_ip && kme_ip[0]) ? kme_ip : kme_host;
 
-    WOLFSSL_CTX *ctx = wolfSSL_CTX_new(wolfTLSv1_2_client_method());
-    if (!ctx) return NULL;
-
-    if (wolfSSL_CTX_load_verify_buffer(ctx, (unsigned char*)ca_pem, strlen(ca_pem),
-                                        SSL_FILETYPE_PEM) != SSL_SUCCESS) {
-        wolfSSL_CTX_free(ctx); return NULL;
+    int cert_der_len, ca_der_len;
+    unsigned char *cert_der = pem_to_der(cert_pem, "CERTIFICATE", &cert_der_len);
+    unsigned char *ca_der   = pem_to_der(ca_pem, "CERTIFICATE", &ca_der_len);
+    if (!cert_der || !ca_der) {
+        free(cert_der); free(ca_der); return NULL;
     }
 
-    if (wolfSSL_CTX_use_certificate_buffer(ctx, (unsigned char*)cert_pem, strlen(cert_pem),
-                                            SSL_FILETYPE_PEM) != SSL_SUCCESS) {
-        wolfSSL_CTX_free(ctx); return NULL;
-    }
+    int pkcs8_len;
+    unsigned char *pkcs8_key = pkcs8_mldsa65_der(sae_sk, MLDSA65_SECRET_KEY_SIZE, &pkcs8_len);
+    if (!pkcs8_key) { free(cert_der); free(ca_der); return NULL; }
 
-    if (wolfSSL_CTX_use_PrivateKey_buffer(ctx, key_der, key_der_len,
-                                           SSL_FILETYPE_ASN1) != SSL_SUCCESS) {
-        wolfSSL_CTX_free(ctx); return NULL;
-    }
+    WOLFSSL_CTX *ctx = pqc_make_tls_ctx(0, cert_der, cert_der_len,
+                                        pkcs8_key, pkcs8_len, ca_der, ca_der_len);
+    free(cert_der); free(pkcs8_key);
+    if (!ctx) { free(ca_der); return NULL; }
 
     int sock = tcp_connect(connect_addr, kme_port);
-    if (sock < 0) { wolfSSL_CTX_free(ctx); return NULL; }
+    if (sock < 0) { free(ca_der); wolfSSL_CTX_free(ctx); return NULL; }
 
     WOLFSSL *ssl = wolfSSL_new(ctx);
-    if (!ssl) { close(sock); wolfSSL_CTX_free(ctx); return NULL; }
+    if (!ssl) { free(ca_der); close(sock); wolfSSL_CTX_free(ctx); return NULL; }
 
     wolfSSL_set_fd(ssl, sock);
-    wolfSSL_UseSNI(ssl, WOLFSSL_SNI_HOST_NAME, kme_host, strlen(kme_host));
 
-    if (wolfSSL_connect(ssl) != SSL_SUCCESS) {
-        wolfSSL_free(ssl); close(sock); wolfSSL_CTX_free(ctx); return NULL;
+    if (wolfSSL_connect(ssl) != WOLFSSL_SUCCESS) {
+        free(ca_der); wolfSSL_free(ssl); close(sock); wolfSSL_CTX_free(ctx); return NULL;
     }
+
+    if (_pqc_verify_peer(ssl, ca_der, ca_der_len) != 0) {
+        fprintf(stderr, "[ERROR] kme_request: peer certificate verification failed\n");
+        free(ca_der); wolfSSL_free(ssl); close(sock); wolfSSL_CTX_free(ctx); return NULL;
+    }
+    free(ca_der);
 
     char request[1024];
     sprintf(request,
@@ -1789,21 +1537,22 @@ char *kme_request(const unsigned char *key_der, int key_der_len,
     return result;
 }
 
-char *kme_get_key(const unsigned char *key_der, int key_der_len,
+char *kme_get_key(const unsigned char *sae_sk,
                   const char *cert, const char *ca,
-                  const char *kme_host, const char *kme_ip, const char *kme_peer) {
+                  const char *kme_host, const char *kme_ip, int kme_port,
+                  const char *kme_peer) {
     char path[512];
     sprintf(path, "/api/v1/keys/%s/enc_keys", kme_peer);
-    return kme_request(key_der, key_der_len, cert, ca, kme_host, kme_ip, 443, path);
+    return kme_request(sae_sk, cert, ca, kme_host, kme_ip, kme_port, path);
 }
 
-char *kme_get_key_with_id(const unsigned char *key_der, int key_der_len,
+char *kme_get_key_with_id(const unsigned char *sae_sk,
                           const char *cert, const char *ca,
-                          const char *kme_host, const char *kme_ip,
+                          const char *kme_host, const char *kme_ip, int kme_port,
                           const char *kme_peer, const char *key_id) {
     char path[512];
     sprintf(path, "/api/v1/keys/%s/dec_keys?key_ID=%s", kme_peer, key_id);
-    return kme_request(key_der, key_der_len, cert, ca, kme_host, kme_ip, 443, path);
+    return kme_request(sae_sk, cert, ca, kme_host, kme_ip, kme_port, path);
 }
 
 /* ==================== QKD Encryption/Decryption ==================== */
@@ -1962,9 +1711,6 @@ char *qkd_decrypt(const char *blob_b64, const char *key_text) {
     return (char*)plaintext;
 }
 
-
-
-
 static WOLFSSL_CTX *pqc_make_tls_ctx(int is_server,
     const unsigned char *cert_der, int cert_len,
     const unsigned char *pkcs8_key, int key_len,
@@ -1976,6 +1722,11 @@ static WOLFSSL_CTX *pqc_make_tls_ctx(int is_server,
         is_server ? wolfTLSv1_3_server_method() : wolfTLSv1_3_client_method()
     );
     if (!ctx) { fprintf(stderr, "[ERROR] pqc_make_tls_ctx: wolfSSL_CTX_new failed\n"); return NULL; }
+
+    if (_pqc_set_mlkem_group(ctx) != WOLFSSL_SUCCESS) {
+        fprintf(stderr, "[ERROR] pqc_make_tls_ctx: set_groups (ML-KEM-768) failed\n");
+        wolfSSL_CTX_free(ctx); return NULL;
+    }
 
     if (wolfSSL_CTX_use_certificate_buffer(ctx, cert_der, cert_len,
                                             WOLFSSL_FILETYPE_ASN1) != WOLFSSL_SUCCESS) {
@@ -2041,12 +1792,12 @@ static void tls_get_peer_cn(WOLFSSL *ssl, char *cn, int cn_max) {
 /* ==================== PQC Channel Protocol (WolfSSL mTLS) ==================== */
 
 /*
- * Send a JSON message to a remote repetitor using WolfSSL mTLS.
+ * Send a JSON message to a remote relay using WolfSSL mTLS.
  * Acts as TLS client.
  */
 int pqc_send_message(const char *host, int port,
                      const unsigned char *my_sk, const char *my_cert,
-                     const char *ca_cert, const char *msg_json, const char *rep_id) {
+                     const char *ca_cert, const char *msg_json, const char *relay_id) {
     char ts[32];
     get_timestamp(ts, sizeof(ts));
 
@@ -2055,7 +1806,7 @@ int pqc_send_message(const char *host, int port,
     unsigned char *cert_der = pem_to_der(my_cert, "CERTIFICATE", &cert_der_len);
     unsigned char *ca_der   = pem_to_der(ca_cert, "CERTIFICATE", &ca_der_len);
     if (!cert_der || !ca_der) {
-        fprintf(stderr, "[ERROR][%s] pqc_send_message: PEM decode failed\n", rep_id);
+        fprintf(stderr, "[ERROR][%s] pqc_send_message: PEM decode failed\n", relay_id);
         free(cert_der); free(ca_der);
         return -1;
     }
@@ -2064,7 +1815,7 @@ int pqc_send_message(const char *host, int port,
     int pkcs8_len;
     unsigned char *pkcs8_key = pkcs8_mldsa65_der(my_sk, MLDSA65_SECRET_KEY_SIZE, &pkcs8_len);
     if (!pkcs8_key) {
-        fprintf(stderr, "[ERROR][%s] pqc_send_message: PKCS#8 wrap failed\n", rep_id);
+        fprintf(stderr, "[ERROR][%s] pqc_send_message: PKCS#8 wrap failed\n", relay_id);
         free(cert_der); free(ca_der);
         return -1;
     }
@@ -2074,7 +1825,7 @@ int pqc_send_message(const char *host, int port,
         cert_der, cert_der_len, pkcs8_key, pkcs8_len, ca_der, ca_der_len);
     free(cert_der); free(pkcs8_key);
     if (!ctx) {
-        fprintf(stderr, "[ERROR][%s] pqc_send_message: TLS context creation failed\n", rep_id);
+        fprintf(stderr, "[ERROR][%s] pqc_send_message: TLS context creation failed\n", relay_id);
         free(ca_der);
         return -1;
     }
@@ -2083,7 +1834,7 @@ int pqc_send_message(const char *host, int port,
     int sock = tcp_connect(host, port);
     if (sock < 0) {
         fprintf(stderr, "[ERROR][%s] pqc_send_message: TCP connect to %s:%d failed\n",
-                rep_id, host, port);
+                relay_id, host, port);
         free(ca_der); wolfSSL_CTX_free(ctx);
         return -1;
     }
@@ -2100,13 +1851,13 @@ int pqc_send_message(const char *host, int port,
         char errbuf[80];
         wolfSSL_ERR_error_string(err, errbuf);
         fprintf(stderr, "[ERROR][%s] pqc_send_message: TLS handshake failed: err=%d (%s)\n",
-                rep_id, err, errbuf);
+                relay_id, err, errbuf);
         free(ca_der); wolfSSL_free(ssl); close(sock); wolfSSL_CTX_free(ctx);
         return -1;
     }
 
     if (_pqc_verify_peer(ssl, ca_der, ca_der_len) != 0) {
-        fprintf(stderr, "[ERROR][%s] pqc_send_message: peer cert verification failed\n", rep_id);
+        fprintf(stderr, "[ERROR][%s] pqc_send_message: peer cert verification failed\n", relay_id);
         free(ca_der); wolfSSL_free(ssl); close(sock); wolfSSL_CTX_free(ctx);
         return -1;
     }
@@ -2116,12 +1867,12 @@ int pqc_send_message(const char *host, int port,
     char peer_cn[MAX_CN_SIZE];
     tls_get_peer_cn(ssl, peer_cn, MAX_CN_SIZE);
     get_timestamp(ts, sizeof(ts));
-    fprintf(stderr, "[%s][%s] PQC TLS connected to %s\n", ts, rep_id, peer_cn);
+    fprintf(stderr, "[%s][%s] PQC TLS connected to %s\n", ts, relay_id, peer_cn);
 
     /* Send message (length-prefixed) */
     int msg_len = strlen(msg_json);
     if (tls_send_msg(ssl, (unsigned char*)msg_json, msg_len) != 0) {
-        fprintf(stderr, "[ERROR][%s] pqc_send_message: send failed\n", rep_id);
+        fprintf(stderr, "[ERROR][%s] pqc_send_message: send failed\n", relay_id);
         wolfSSL_shutdown(ssl); wolfSSL_free(ssl); close(sock); wolfSSL_CTX_free(ctx);
         return -1;
     }
@@ -2131,7 +1882,7 @@ int pqc_send_message(const char *host, int port,
     unsigned char *ack = tls_recv_msg(ssl, &ack_len);
     if (ack) {
         get_timestamp(ts, sizeof(ts));
-        fprintf(stderr, "[%s][%s] Ack: %s\n", ts, rep_id, (char*)ack);
+        fprintf(stderr, "[%s][%s] Ack: %s\n", ts, relay_id, (char*)ack);
         free(ack);
     }
 
@@ -2143,12 +1894,12 @@ int pqc_send_message(const char *host, int port,
 }
 
 /*
- * Listen for one incoming message from a remote repetitor using WolfSSL mTLS.
+ * Listen for one incoming message from a remote relay using WolfSSL mTLS.
  * Acts as TLS server.  Sends "RECEIVED" ACK after receiving.
  */
 pqc_message_t pqc_receive_message(int port, const unsigned char *my_sk,
                                   const char *my_cert, const char *ca_cert,
-                                  const char *whitelist, const char *rep_id) {
+                                  const char *whitelist, const char *relay_id) {
     pqc_message_t result = {NULL, NULL};
     char ts[32];
 
@@ -2157,7 +1908,7 @@ pqc_message_t pqc_receive_message(int port, const unsigned char *my_sk,
     unsigned char *cert_der = pem_to_der(my_cert, "CERTIFICATE", &cert_der_len);
     unsigned char *ca_der   = pem_to_der(ca_cert, "CERTIFICATE", &ca_der_len);
     if (!cert_der || !ca_der) {
-        fprintf(stderr, "[ERROR][%s] pqc_receive_message: PEM decode failed\n", rep_id);
+        fprintf(stderr, "[ERROR][%s] pqc_receive_message: PEM decode failed\n", relay_id);
         free(cert_der); free(ca_der);
         return result;
     }
@@ -2166,7 +1917,7 @@ pqc_message_t pqc_receive_message(int port, const unsigned char *my_sk,
     int pkcs8_len;
     unsigned char *pkcs8_key = pkcs8_mldsa65_der(my_sk, MLDSA65_SECRET_KEY_SIZE, &pkcs8_len);
     if (!pkcs8_key) {
-        fprintf(stderr, "[ERROR][%s] pqc_receive_message: PKCS#8 wrap failed\n", rep_id);
+        fprintf(stderr, "[ERROR][%s] pqc_receive_message: PKCS#8 wrap failed\n", relay_id);
         free(cert_der); free(ca_der);
         return result;
     }
@@ -2176,7 +1927,7 @@ pqc_message_t pqc_receive_message(int port, const unsigned char *my_sk,
         cert_der, cert_der_len, pkcs8_key, pkcs8_len, ca_der, ca_der_len);
     free(cert_der); free(pkcs8_key);
     if (!ctx) {
-        fprintf(stderr, "[ERROR][%s] pqc_receive_message: TLS context creation failed\n", rep_id);
+        fprintf(stderr, "[ERROR][%s] pqc_receive_message: TLS context creation failed\n", relay_id);
         free(ca_der);
         return result;
     }
@@ -2201,7 +1952,7 @@ pqc_message_t pqc_receive_message(int port, const unsigned char *my_sk,
     }
 
     get_timestamp(ts, sizeof(ts));
-    fprintf(stderr, "[%s][%s] PQC TLS listening on port %d\n", ts, rep_id, port);
+    fprintf(stderr, "[%s][%s] PQC TLS listening on port %d\n", ts, relay_id, port);
 
     struct sockaddr_in client_addr;
     socklen_t client_len = sizeof(client_addr);
@@ -2211,12 +1962,12 @@ pqc_message_t pqc_receive_message(int port, const unsigned char *my_sk,
     }
 
     get_timestamp(ts, sizeof(ts));
-    fprintf(stderr, "[%s][%s] Connection from %s\n", ts, rep_id, inet_ntoa(client_addr.sin_addr));
+    fprintf(stderr, "[%s][%s] Connection from %s\n", ts, relay_id, inet_ntoa(client_addr.sin_addr));
 
     /* TLS handshake */
     WOLFSSL *ssl = wolfSSL_new(ctx);
     if (!ssl) {
-        fprintf(stderr, "[ERROR][%s] pqc_receive_message: wolfSSL_new failed\n", rep_id);
+        fprintf(stderr, "[ERROR][%s] pqc_receive_message: wolfSSL_new failed\n", relay_id);
         free(ca_der); close(client); close(server); wolfSSL_CTX_free(ctx); return result;
     }
     wolfSSL_set_fd(ssl, client);
@@ -2226,13 +1977,13 @@ pqc_message_t pqc_receive_message(int port, const unsigned char *my_sk,
         char errbuf[80];
         wolfSSL_ERR_error_string(err, errbuf);
         fprintf(stderr, "[ERROR][%s] pqc_receive_message: TLS accept failed: err=%d (%s)\n",
-                rep_id, err, errbuf);
+                relay_id, err, errbuf);
         free(ca_der); wolfSSL_free(ssl); close(client); close(server); wolfSSL_CTX_free(ctx);
         return result;
     }
 
     if (_pqc_verify_peer(ssl, ca_der, ca_der_len) != 0) {
-        fprintf(stderr, "[ERROR][%s] pqc_receive_message: peer cert verification failed\n", rep_id);
+        fprintf(stderr, "[ERROR][%s] pqc_receive_message: peer cert verification failed\n", relay_id);
         free(ca_der); wolfSSL_free(ssl); close(client); close(server); wolfSSL_CTX_free(ctx);
         return result;
     }
@@ -2242,11 +1993,11 @@ pqc_message_t pqc_receive_message(int port, const unsigned char *my_sk,
     char peer_cn[MAX_CN_SIZE];
     tls_get_peer_cn(ssl, peer_cn, MAX_CN_SIZE);
     get_timestamp(ts, sizeof(ts));
-    fprintf(stderr, "[%s][%s] PQC TLS from %s\n", ts, rep_id, peer_cn);
+    fprintf(stderr, "[%s][%s] PQC TLS from %s\n", ts, relay_id, peer_cn);
 
     /* Whitelist check */
     if (whitelist && strlen(whitelist) > 0 && !strstr(whitelist, peer_cn)) {
-        fprintf(stderr, "[%s][%s] Rejected: %s not in whitelist\n", ts, rep_id, peer_cn);
+        fprintf(stderr, "[%s][%s] Rejected: %s not in whitelist\n", ts, relay_id, peer_cn);
         wolfSSL_shutdown(ssl); wolfSSL_free(ssl);
         close(client); close(server); wolfSSL_CTX_free(ctx);
         return result;
@@ -2256,7 +2007,7 @@ pqc_message_t pqc_receive_message(int port, const unsigned char *my_sk,
     int msg_len;
     unsigned char *msg = tls_recv_msg(ssl, &msg_len);
     if (!msg) {
-        fprintf(stderr, "[ERROR][%s] pqc_receive_message: recv failed\n", rep_id);
+        fprintf(stderr, "[ERROR][%s] pqc_receive_message: recv failed\n", relay_id);
         wolfSSL_shutdown(ssl); wolfSSL_free(ssl);
         close(client); close(server); wolfSSL_CTX_free(ctx);
         return result;
@@ -2278,47 +2029,46 @@ pqc_message_t pqc_receive_message(int port, const unsigned char *my_sk,
 
 /* ==================== Cleanup ==================== */
 
-void free_config(repetitor_config_t *c) {
+void free_config(relay_config_t *c) {
     if (!c) return;
-    free(c->left_repetitor_url); free(c->right_repetitor_url);
-    free(c->left_repetitor_id);  free(c->right_repetitor_id);
+    free(c->left_relay_ip); free(c->right_relay_ip);
+    free(c->left_relay_id);  free(c->right_relay_id);
     free(c->left_kme);           free(c->right_kme);
     free(c->left_cn);            free(c->right_cn);
     free(c->left_kme_peer);      free(c->right_kme_peer);
     free(c->whitelist);          free(c->pqc_certificate);
-    free(c->left_rsa_key_der);   free(c->left_rsa_cert);
-    free(c->right_rsa_key_der);  free(c->right_rsa_cert);
+    free(c->kme_ca_certificate);
     free(c);
 }
 
 /* ==================== Main ==================== */
 
 int main(int argc, char *argv[]) {
-    char *repetitor_id = "DR1";
+    char *relay_id = "R1";
     int port = 9001;
 
     if (argc >= 3) {
-        repetitor_id = argv[1];
+        relay_id = argv[1];
         port = atoi(argv[2]);
     }
 
     char ts[32];
     fprintf(stderr, "========================================\n");
-    fprintf(stderr, "QKD Relay Repetitor (WolfSSL mTLS PQC)\n");
-    fprintf(stderr, "Repetitor ID: %s, Port: %d\n", repetitor_id, port);
+    fprintf(stderr, "QKD Relay (WolfSSL mTLS PQC)\n");
+    fprintf(stderr, "Relay ID: %s, Port: %d\n", relay_id, port);
     fprintf(stderr, "========================================\n");
 
     wolfSSL_Init();
     if (init_rng() != 0) { fprintf(stderr, "RNG init failed\n"); return 1; }
 
-    repetitor_config_t *config = calloc(1, sizeof(repetitor_config_t));
+    relay_config_t *config = calloc(1, sizeof(relay_config_t));
     if (!config) { cleanup_rng(); wolfSSL_Cleanup(); return 1; }
 
-    char rep_url[64];
-    sprintf(rep_url, "127.0.0.1:%d", port);
+    char relay_ip[64];
+    sprintf(relay_ip, "127.0.0.1:%d", port);
 
-    if (get_configuration_hybrid(CONTROLLER_HOST, atoi(CONTROLLER_PORT),
-                                  repetitor_id, rep_url, config) != 0) {
+    if (get_configuration(CONTROLLER_HOST, atoi(CONTROLLER_PORT),
+                                  relay_id, relay_ip, config) != 0) {
         fprintf(stderr, "[ERROR] Failed to get configuration\n");
         free_config(config);
         cleanup_rng();
@@ -2327,23 +2077,23 @@ int main(int argc, char *argv[]) {
     }
 
     get_timestamp(ts, sizeof(ts));
-    fprintf(stderr, "[%s][%s] Configuration received\n", ts, repetitor_id);
-    fprintf(stderr, "[%s][%s] Left: %s (%s)\n", ts, repetitor_id,
-            config->left_repetitor_id  ? config->left_repetitor_id  : "none",
-            config->left_repetitor_url ? config->left_repetitor_url : "");
-    fprintf(stderr, "[%s][%s] Right: %s (%s)\n", ts, repetitor_id,
-            config->right_repetitor_id  ? config->right_repetitor_id  : "none",
-            config->right_repetitor_url ? config->right_repetitor_url : "");
+    fprintf(stderr, "[%s][%s] Configuration received\n", ts, relay_id);
+    fprintf(stderr, "[%s][%s] Left: %s (%s)\n", ts, relay_id,
+            config->left_relay_id  ? config->left_relay_id  : "none",
+            config->left_relay_ip ? config->left_relay_ip : "");
+    fprintf(stderr, "[%s][%s] Right: %s (%s)\n", ts, relay_id,
+            config->right_relay_id  ? config->right_relay_id  : "none",
+            config->right_relay_ip ? config->right_relay_ip : "");
 
     signal(SIGINT, handle_sigint);
 
     get_timestamp(ts, sizeof(ts));
-    fprintf(stderr, "[%s][%s] Ready - entering relay loop\n", ts, repetitor_id);
+    fprintf(stderr, "[%s][%s] Ready - entering relay loop\n", ts, relay_id);
 
     while (keep_running) {
         pqc_message_t msg = pqc_receive_message(port, config->pqc_private_key,
                                                  config->pqc_certificate, PQC_CA_CERTIFICATE,
-                                                 config->whitelist, repetitor_id);
+                                                 config->whitelist, relay_id);
 
         if (!msg.message || !msg.sender_cn) {
             free(msg.message); free(msg.sender_cn);
@@ -2351,43 +2101,45 @@ int main(int argc, char *argv[]) {
         }
 
         get_timestamp(ts, sizeof(ts));
-        fprintf(stderr, "[%s][%s] From %s\n", ts, repetitor_id, msg.sender_cn);
+        fprintf(stderr, "[%s][%s] From %s\n", ts, relay_id, msg.sender_cn);
 
         char *from_ct     = extract_json_string(msg.message, "message");
         char *from_key_id = extract_json_string(msg.message, "key_ID");
 
-        int is_from_left = config->left_repetitor_id &&
-                           strcmp(msg.sender_cn, config->left_repetitor_id) == 0;
+        int is_from_left = config->left_relay_id &&
+                           strcmp(msg.sender_cn, config->left_relay_id) == 0;
 
-        /* KME info */
+        /* KME info -- this relay's own identity cert (config->pqc_certificate)
+         * doubles as its SAE cert on both KMEs it talks to. */
         const char *kme_dec      = is_from_left ? config->left_kme      : config->right_kme;
-        const char *kme_dec_ip   = is_from_left ? config->left_kme_url  : config->right_kme_url;
+        const char *kme_dec_ip   = is_from_left ? config->left_kme_ip  : config->right_kme_ip;
         const char *kme_dec_peer = is_from_left ? config->left_kme_peer : config->right_kme_peer;
-        unsigned char *kme_dec_key     = is_from_left ? config->left_rsa_key_der  : config->right_rsa_key_der;
-        int            kme_dec_key_len = is_from_left ? config->left_rsa_key_der_len : config->right_rsa_key_der_len;
-        const char *kme_dec_cert = is_from_left ? config->left_rsa_cert  : config->right_rsa_cert;
 
         const char *kme_enc      = is_from_left ? config->right_kme     : config->left_kme;
-        const char *kme_enc_ip   = is_from_left ? config->right_kme_url : config->left_kme_url;
+        const char *kme_enc_ip   = is_from_left ? config->right_kme_ip : config->left_kme_ip;
         const char *kme_enc_peer = is_from_left ? config->right_kme_peer : config->left_kme_peer;
-        unsigned char *kme_enc_key     = is_from_left ? config->right_rsa_key_der  : config->left_rsa_key_der;
-        int            kme_enc_key_len = is_from_left ? config->right_rsa_key_der_len : config->left_rsa_key_der_len;
-        const char *kme_enc_cert = is_from_left ? config->right_rsa_cert : config->left_rsa_cert;
 
-        const char *to_url = is_from_left ? config->right_repetitor_url : config->left_repetitor_url;
+        const char *to_ip = is_from_left ? config->right_relay_ip : config->left_relay_ip;
+
+        /* KME entries carry "host:port" (see controller.py's LINKS) since
+         * each of the 4 KME containers maps to a different host port. */
+        char kme_dec_host[128] = {0}; int kme_dec_port = 8443;
+        char kme_enc_host[128] = {0}; int kme_enc_port = 8443;
+        if (kme_dec && strlen(kme_dec) > 0) parse_url(kme_dec, kme_dec_host, &kme_dec_port);
+        if (kme_enc && strlen(kme_enc) > 0) parse_url(kme_enc, kme_enc_host, &kme_enc_port);
 
         char *plaintext = NULL;
 
         /* Decrypt with KME key */
-        if (kme_dec && strlen(kme_dec) > 0 && kme_dec_key && from_key_id && strlen(from_key_id) > 0) {
-            fprintf(stderr, "[%s][%s] Getting key from KME %s...\n", ts, repetitor_id, kme_dec);
-            char *key_resp = kme_get_key_with_id(kme_dec_key, kme_dec_key_len,
-                                                  kme_dec_cert, QKD_CA_CERTIFICATE,
-                                                  kme_dec, kme_dec_ip, kme_dec_peer, from_key_id);
+        if (kme_dec && strlen(kme_dec) > 0 && from_key_id && strlen(from_key_id) > 0) {
+            fprintf(stderr, "[%s][%s] Getting key from KME %s...\n", ts, relay_id, kme_dec);
+            char *key_resp = kme_get_key_with_id(config->pqc_private_key,
+                                                  config->pqc_certificate, config->kme_ca_certificate,
+                                                  kme_dec_host, kme_dec_ip, kme_dec_port, kme_dec_peer, from_key_id);
             if (key_resp) {
                 char *key_val = extract_json_string(key_resp, "key");
                 if (key_val) {
-                    fprintf(stderr, "[%s][%s] Decrypting with QKD key...\n", ts, repetitor_id);
+                    fprintf(stderr, "[%s][%s] Decrypting with QKD key...\n", ts, relay_id);
                     plaintext = qkd_decrypt(from_ct, key_val);
                     free(key_val);
                 }
@@ -2398,22 +2150,22 @@ int main(int argc, char *argv[]) {
         if (!plaintext) plaintext = from_ct ? strdup(from_ct) : strdup("");
 
         get_timestamp(ts, sizeof(ts));
-        fprintf(stderr, "[%s][%s] Plaintext: %.50s...\n", ts, repetitor_id, plaintext);
+        fprintf(stderr, "[%s][%s] Plaintext: %.50s...\n", ts, relay_id, plaintext);
 
         char *to_ct     = NULL;
         char *to_key_id = NULL;
 
         /* Encrypt with KME key */
-        if (kme_enc && strlen(kme_enc) > 0 && kme_enc_key) {
-            fprintf(stderr, "[%s][%s] Getting key from KME %s...\n", ts, repetitor_id, kme_enc);
-            char *key_resp = kme_get_key(kme_enc_key, kme_enc_key_len,
-                                          kme_enc_cert, QKD_CA_CERTIFICATE,
-                                          kme_enc, kme_enc_ip, kme_enc_peer);
+        if (kme_enc && strlen(kme_enc) > 0) {
+            fprintf(stderr, "[%s][%s] Getting key from KME %s...\n", ts, relay_id, kme_enc);
+            char *key_resp = kme_get_key(config->pqc_private_key,
+                                          config->pqc_certificate, config->kme_ca_certificate,
+                                          kme_enc_host, kme_enc_ip, kme_enc_port, kme_enc_peer);
             if (key_resp) {
                 char *key_val = extract_json_string(key_resp, "key");
                 to_key_id = extract_json_string(key_resp, "key_ID");
                 if (key_val) {
-                    fprintf(stderr, "[%s][%s] Encrypting with QKD key...\n", ts, repetitor_id);
+                    fprintf(stderr, "[%s][%s] Encrypting with QKD key...\n", ts, relay_id);
                     to_ct = qkd_encrypt(plaintext, key_val);
                     free(key_val);
                 }
@@ -2436,17 +2188,17 @@ int main(int argc, char *argv[]) {
 
         char to_host[128];
         int to_port;
-        parse_url(to_url, to_host, &to_port);
+        parse_url(to_ip, to_host, &to_port);
 
         get_timestamp(ts, sizeof(ts));
-        fprintf(stderr, "[%s][%s] Forwarding to %s...\n", ts, repetitor_id, to_url);
+        fprintf(stderr, "[%s][%s] Forwarding to %s...\n", ts, relay_id, to_ip);
 
         int ret = pqc_send_message(to_host, to_port, config->pqc_private_key,
                                     config->pqc_certificate, PQC_CA_CERTIFICATE,
-                                    to_msg, repetitor_id);
+                                    to_msg, relay_id);
 
         get_timestamp(ts, sizeof(ts));
-        fprintf(stderr, "[%s][%s] %s\n", ts, repetitor_id,
+        fprintf(stderr, "[%s][%s] %s\n", ts, relay_id,
                 ret == 0 ? "Forwarded OK" : "Forward FAILED");
 
         free(msg.message);
