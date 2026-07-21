@@ -138,12 +138,6 @@ since a Keystone enclave binary links everything statically anyway.
 pip install cryptography fastapi uvicorn
 ```
 
-No `liboqs-python` — earlier revisions carried it as a hard dependency behind an
-`oqs.Signature` → `wolfssl_mldsa.Signature` monkey-patch shim, but every call site already
-only ever requested ML-DSA-65, so the shim always redirected to WolfSSL and liboqs itself
-was never actually exercised. `generate_pqc_ca.py`, `controller.py`, and `relay.py` now
-call `wolfssl_mldsa.Signature` directly (matching what `test_client_pqc.py` already did).
-
 ### Docker + Docker Compose (for the KME simulator)
 
 See `external/next-door-key-simulator/README.md`.
