@@ -17,6 +17,16 @@ Bootstrap order:
   controller presents its ML-DSA-65 cert; relay is authenticated via
   nonce-based attestation inside the TLS tunnel).
 
+Attestation:
+  A relay is admitted only on a Keystone attestation report that chains to
+  the pinned root key, carries the pinned enclave measurement, and binds
+  "<relay_id>:<nonce_hex>" (see keystone_attestation.py). The SHA256
+  stand-in report of non-enclave relays (relay.py, native relay.c) is
+  refused unless --insecure-dev-attestation names that relay. The relay's
+  platform is inferred from which kind of report verified, never taken
+  from the relay. All actions after register are bound to the TLS
+  connection that registered, not to a relay_id the client names.
+
 One PKI domain: the controller signs everything (its own cert, relay
 identity certs, and KME/SAE identity certs) with a single ML-DSA-65 CA.
 
@@ -25,7 +35,9 @@ Usage:
   python generate_pqc_ca.py --output-dir ./pqc_ca
 
   # Run controller:
-  python controller.py --pqc-ca-cert ./pqc_ca/ca_certificate.pem --pqc-ca-key ./pqc_ca/ca_private_key.pem
+  python controller.py --pqc-ca-cert ./pqc_ca/ca_certificate.pem --pqc-ca-key ./pqc_ca/ca_private_key.pem \
+      --enclave-measurement <hex>                # admit enclave relays
+      [--insecure-dev-attestation R0,R2]         # also admit these non-enclave relays (dev only)
 """
 
 import threading
@@ -37,9 +49,13 @@ import os
 import sys
 import json
 import hashlib
+import hmac
+import binascii
 import argparse
 
 import wolfssl_mldsa
+import keystone_attestation
+from keystone_attestation import AttestationError
 
 from datetime import datetime, timedelta, timezone
 
@@ -73,6 +89,20 @@ KME_CA_CERTIFICATE: Optional[str] = None
 # Controller's own ML-DSA-65 cert (for TLS server auth)
 CTRL_PRIVATE_KEY: Optional[bytes] = None
 CTRL_CERTIFICATE: Optional[str] = None   # PEM string
+
+# Attestation policy (set from the command line, see Main)
+# SHA3-512 measurement of the release relay enclave (loader + eyrie-rt +
+# relay eapp). None => no enclave relay can be admitted.
+ENCLAVE_MEASUREMENT: Optional[bytes] = None
+# SHA3-512 of the Security Monitor image. None => SM hash not pinned (the
+# SM is still authenticated through the root-key signature).
+SM_MEASUREMENT: Optional[bytes] = None
+# Ed25519(SHA3) device root key that must endorse the SM.
+ATTESTATION_ROOT_KEY: bytes = keystone_attestation.KEYSTONE_TEST_DEV_PUBLIC_KEY
+# Relays allowed to authenticate with the SHA256 dev stand-in report:
+# None => nobody (default), "*" => everybody, else a set of relay_ids.
+DEV_ATTESTATION_RELAYS = None
+DEV_REPORT_PREFIX = "attestation_report:"
 
 # CA file paths
 PQC_CA_CERT_PATH = "./pqc_ca/ca_certificate.pem"
@@ -476,37 +506,104 @@ LINKS = [
 
 
 class RelaySession:
-    def __init__(self):
+    def __init__(self, relay_id: str):
+        self.relay_id: str = relay_id
         self.nonce: Optional[bytes] = None
         self.relay_ip: str = ""
         self.authenticated: bool = False
-        # "riscv" (real Keystone enclave, HW attestation) or "native"
-        # (Python/native-C relay, dev SHA256 attestation stand-in).
-        # Explicit, self-declared at register time -- kept independent of
-        # relay_id, which must stay a clean "R0"/"R1"/"R2" to match the
-        # KME's fixed ATTACHED_SAE_ID.
-        self.platform: str = "native"
+        # "riscv" (verified Keystone enclave report) or "native" (dev SHA256
+        # stand-in, only under --insecure-dev-attestation). Set by
+        # handle_attest from the kind of report that verified -- never
+        # taken from the relay. Kept independent of relay_id, which must
+        # stay a clean "R0"/"R1"/"R2" to match the KME's fixed ATTACHED_SAE_ID.
+        self.platform: Optional[str] = None
 
 
+class ConnContext:
+    """Per-TLS-connection state. register binds a session to the connection;
+    every later action uses that session, so a second connection cannot ride
+    on another connection's attestation by naming its relay_id."""
+    def __init__(self):
+        self.session: Optional[RelaySession] = None
+
+
+# Admitted (or in-progress) sessions by relay_id -- used only to stop a
+# second registration for a relay that has already been admitted.
 SESSIONS: Dict[str, RelaySession] = {}
 RELAYS = [None, None, None]
 
 
+# ==================== Attestation Verification ====================
+
+def dev_attestation_allowed(relay_id: str) -> bool:
+    if DEV_ATTESTATION_RELAYS is None:
+        return False
+    return DEV_ATTESTATION_RELAYS == "*" or relay_id in DEV_ATTESTATION_RELAYS
+
+
+def verify_attestation(relay_id: str, nonce: bytes, report: str) -> str:
+    """Verify an attestation report; return the platform it proves.
+
+    Raises AttestationError on any failure.
+    """
+    if report.startswith(DEV_REPORT_PREFIX):
+        if not dev_attestation_allowed(relay_id):
+            raise AttestationError(
+                "non-enclave (dev stand-in) report refused; "
+                "--insecure-dev-attestation does not cover this relay")
+        print(f"[{relay_id}] !!! WARNING: INSECURE DEV ATTESTATION -- "
+              f"relay is NOT running in a TEE; report is a nonce echo !!!")
+        expected = DEV_REPORT_PREFIX + hashlib.sha256(
+            nonce.hex().encode() + relay_id.encode()).hexdigest()
+        if not hmac.compare_digest(report, expected):
+            raise AttestationError("dev stand-in report mismatch")
+        return "native"
+
+    if ENCLAVE_MEASUREMENT is None:
+        raise AttestationError(
+            "no --enclave-measurement pinned; enclave relays cannot be admitted")
+    try:
+        raw = base64.b64decode(report, validate=True)
+    except (binascii.Error, ValueError):
+        raise AttestationError("report is neither a dev stand-in nor a base64 Keystone report")
+
+    # relay.c binds snprintf("%s:%s", relay_id, nonce_hex) into the report
+    expected_data = f"{relay_id}:{nonce.hex()}".encode()
+    r = keystone_attestation.verify_report(
+        raw,
+        dev_public_key=ATTESTATION_ROOT_KEY,
+        expected_enclave_hash=ENCLAVE_MEASUREMENT,
+        expected_sm_hash=SM_MEASUREMENT,
+        expected_data=expected_data,
+    )
+    print(f"[{relay_id}] Keystone report verified: "
+          f"enclave={r.enclave_hash.hex()[:16]}... sm={r.sm_hash.hex()[:16]}... "
+          f"data={expected_data.decode()}")
+    return "riscv"
+
+
 # ==================== Protocol Handlers (sync, thread-safe) ====================
 
-def handle_register(data: dict) -> dict:
+def handle_register(data: dict, ctx: ConnContext) -> dict:
     """Handle register inside the TLS tunnel: issue a nonce for attestation."""
     try:
         relay_id = data["relay_id"]
         print(f"[{relay_id}] Register")
 
+        if ctx.session is not None:
+            return {"error": "Connection already registered"}
+
         nonce = os.urandom(32)
         with sessions_lock:
-            session = RelaySession()
+            existing = SESSIONS.get(relay_id)
+            if existing is not None and existing.authenticated:
+                print(f"[{relay_id}] Refused: relay already admitted")
+                return {"error": "Relay already admitted"}
+            session = RelaySession(relay_id)
             session.nonce = nonce
             session.relay_ip = data.get("relay_ip", "")
-            session.platform = data.get("platform", "native")
             SESSIONS[relay_id] = session
+        ctx.session = session
 
         print(f"[{relay_id}] Nonce: {nonce.hex()}")
         return {"nonce": nonce.hex()}
@@ -515,29 +612,36 @@ def handle_register(data: dict) -> dict:
         return {"error": str(e)}
 
 
-def handle_attest(data: dict) -> dict:
-    """Handle attest inside the TLS tunnel: verify SHA256(nonce_hex + relay_id)."""
+def handle_attest(data: dict, ctx: ConnContext) -> dict:
+    """Handle attest inside the TLS tunnel: verify the attestation report
+    against the nonce issued on this connection."""
     try:
-        relay_id = data["relay_id"]
+        session = ctx.session
+        relay_id = session.relay_id
         attestation_report = data.get("attestation_report", "")
 
-        with sessions_lock:
-            session = SESSIONS.get(relay_id)
-        if not session:
-            return {"error": "No session found"}
+        # Single use: a nonce is consumed by the first attest, pass or fail.
+        nonce, session.nonce = session.nonce, None
+        if nonce is None:
+            return {"error": "No outstanding nonce (register again)"}
 
-        nonce_hex = session.nonce.hex()
-        expected_hash = hashlib.sha256(
-            nonce_hex.encode() + relay_id.encode()
-        ).hexdigest()
-        expected_report = f"attestation_report:{expected_hash}"
-
-        if attestation_report != expected_report and session.platform != "riscv":
-            print(f"[{relay_id}] Attestation mismatch!")
+        try:
+            platform = verify_attestation(relay_id, nonce, attestation_report)
+        except AttestationError as e:
+            print(f"[{relay_id}] Attestation verification failed: {e}")
+            with sessions_lock:
+                if SESSIONS.get(relay_id) is session:
+                    del SESSIONS[relay_id]
+            ctx.session = None
             return {"error": "Attestation verification failed"}
 
-        print(f"[{relay_id}] Authenticated")
-        session.authenticated = True
+        with sessions_lock:
+            if SESSIONS.get(relay_id) is not session:
+                # Another connection re-registered this relay_id meanwhile
+                return {"error": "Session superseded"}
+            session.platform = platform
+            session.authenticated = True
+        print(f"[{relay_id}] Authenticated (platform={platform})")
 
         with relays_lock:
             try:
@@ -560,18 +664,13 @@ def handle_attest(data: dict) -> dict:
         return {"error": str(e)}
 
 
-def handle_configuration(data: dict) -> dict:
+def handle_configuration(data: dict, ctx: ConnContext) -> dict:
     """Handle configuration request inside the TLS tunnel. Blocks until all relays are ready."""
     try:
-        relay_id = data.get("relay_id")
-        if not relay_id:
-            return {"error": "Missing relay_id"}
-
-        with sessions_lock:
-            session = SESSIONS.get(relay_id)
-
-        if not session or not session.authenticated:
+        session = ctx.session
+        if not session.authenticated:
             return {"error": "Not authenticated"}
+        relay_id = session.relay_id
 
         print(f"[{relay_id}] Configuration request")
 
@@ -638,20 +737,16 @@ def handle_configuration(data: dict) -> dict:
         return {"error": str(e)}
 
 
-def handle_generate_certs(data: dict) -> dict:
+def handle_generate_certs(data: dict, ctx: ConnContext) -> dict:
     """Handle generate_certificates request inside the TLS tunnel."""
     try:
         if PQC_CA_PRIVATE_KEY is None:
             return {"error": "PQC CA not configured"}
 
-        relay_id = data.get("relay_id")
-        if not relay_id:
-            return {"error": "Missing relay_id"}
-
-        with sessions_lock:
-            session = SESSIONS.get(relay_id)
-        if not session or not session.authenticated:
+        session = ctx.session
+        if not session.authenticated:
             return {"error": "Not authenticated"}
+        relay_id = session.relay_id
 
         print(f"[{relay_id}] Certificate generation request")
 
@@ -675,17 +770,25 @@ def handle_generate_certs(data: dict) -> dict:
         return {"error": str(e)}
 
 
-def dispatch_action(action: str, data: dict) -> dict:
-    """Dispatch a TLS protocol action to the appropriate handler."""
+def dispatch_action(action: str, data: dict, ctx: ConnContext) -> dict:
+    """Dispatch a TLS protocol action to the appropriate handler.
+
+    Everything after register runs against the session bound to this
+    connection; a relay_id in the request, if any, must match it.
+    """
     if action == "register":
-        return handle_register(data)
-    elif action == "attest":
-        return handle_attest(data)
+        return handle_register(data, ctx)
+    if action not in ("attest", "configuration", "generate_certificates"):
+        return {"error": f"Unknown action: {action}"}
+    if ctx.session is None:
+        return {"error": "Not registered on this connection"}
+    if data.get("relay_id", ctx.session.relay_id) != ctx.session.relay_id:
+        return {"error": "relay_id does not match this connection's session"}
+    if action == "attest":
+        return handle_attest(data, ctx)
     elif action == "configuration":
-        return handle_configuration(data)
-    elif action == "generate_certificates":
-        return handle_generate_certs(data)
-    return {"error": f"Unknown action: {action}"}
+        return handle_configuration(data, ctx)
+    return handle_generate_certs(data, ctx)
 
 
 # ==================== WolfSSL TLS Server (port 8001) ====================
@@ -698,6 +801,7 @@ def handle_tls_client(conn_sock: socket.socket, cert_der: bytes, pkcs8_der: byte
         with wolfssl_mldsa.pqc_tls_server_accept_anon_client(
                 conn_sock.fileno(), cert_der, pkcs8_der) as conn:
             print(f"[TLS] Handshake complete with {addr}")
+            ctx = ConnContext()
             while True:
                 try:
                     req_bytes = conn.recvmsg()
@@ -713,7 +817,7 @@ def handle_tls_client(conn_sock: socket.socket, cert_der: bytes, pkcs8_der: byte
 
                 action = req.get("action", "")
                 data = req.get("data", {})
-                result = dispatch_action(action, data)
+                result = dispatch_action(action, data, ctx)
                 conn.sendmsg(json.dumps(result).encode())
     except Exception as e:
         print(f"[TLS] Error handling {addr}: {e}")
@@ -768,6 +872,18 @@ parser.add_argument("--kme-ca-cert", default=KME_CA_CERT_PATH, help="Path to KME
 parser.add_argument("--host", default="0.0.0.0", help="Host to bind to")
 parser.add_argument("--port", type=int, default=8000, help="HTTP port (for /ca_cert bootstrap)")
 parser.add_argument("--tls-port", type=int, default=CTRL_TLS_PORT, help="WolfSSL TLS port")
+parser.add_argument("--enclave-measurement", default=None, metavar="HEX",
+                    help="SHA3-512 measurement (128 hex chars) of the release relay enclave; "
+                         "required to admit any enclave relay")
+parser.add_argument("--sm-measurement", default=None, metavar="HEX",
+                    help="SHA3-512 measurement of the Keystone Security Monitor (optional pin)")
+parser.add_argument("--attestation-root-key", default=None, metavar="HEX",
+                    help="Ed25519 device root public key (64 hex chars) that must endorse the SM; "
+                         "defaults to Keystone's public TEST key (QEMU only)")
+parser.add_argument("--insecure-dev-attestation", nargs="?", const="*", default=None,
+                    metavar="RELAY_IDS",
+                    help="DEV ONLY: accept the SHA256 stand-in report (no TEE) from the given "
+                         "comma-separated relays, e.g. R0,R2; with no value, from all relays")
 
 args = parser.parse_args()
 
@@ -775,6 +891,42 @@ PQC_CA_CERT_PATH = args.pqc_ca_cert
 PQC_CA_KEY_PATH = args.pqc_ca_key
 KME_CA_CERT_PATH = args.kme_ca_cert
 CTRL_TLS_PORT = args.tls_port
+
+
+def _hex_arg(value: str, length: int, name: str) -> bytes:
+    try:
+        b = bytes.fromhex(value)
+    except ValueError:
+        b = b""
+    if len(b) != length:
+        print(f"Error: {name} must be {2 * length} hex characters")
+        sys.exit(1)
+    return b
+
+
+if args.enclave_measurement:
+    ENCLAVE_MEASUREMENT = _hex_arg(args.enclave_measurement, keystone_attestation.MDSIZE,
+                                   "--enclave-measurement")
+if args.sm_measurement:
+    SM_MEASUREMENT = _hex_arg(args.sm_measurement, keystone_attestation.MDSIZE, "--sm-measurement")
+if args.attestation_root_key:
+    ATTESTATION_ROOT_KEY = _hex_arg(args.attestation_root_key, keystone_attestation.PUBLIC_KEY_SIZE,
+                                    "--attestation-root-key")
+if args.insecure_dev_attestation is not None:
+    DEV_ATTESTATION_RELAYS = ("*" if args.insecure_dev_attestation == "*" else
+                              {r.strip() for r in args.insecure_dev_attestation.split(",") if r.strip()})
+
+if ENCLAVE_MEASUREMENT is None:
+    print("[!] No --enclave-measurement: enclave relays will be refused")
+else:
+    print(f"[*] Pinned enclave measurement: {ENCLAVE_MEASUREMENT.hex()}")
+if ATTESTATION_ROOT_KEY == keystone_attestation.KEYSTONE_TEST_DEV_PUBLIC_KEY:
+    print("[!] Attestation root key is Keystone's public TEST key -- "
+          "reports prove nothing outside QEMU")
+if DEV_ATTESTATION_RELAYS is not None:
+    who = "ALL relays" if DEV_ATTESTATION_RELAYS == "*" else ", ".join(sorted(DEV_ATTESTATION_RELAYS))
+    print(f"[!] WARNING: --insecure-dev-attestation: non-TEE relays admitted without "
+          f"attestation: {who}")
 
 if os.path.exists(PQC_CA_CERT_PATH) and os.path.exists(PQC_CA_KEY_PATH):
     load_pqc_ca_credentials(PQC_CA_CERT_PATH, PQC_CA_KEY_PATH)

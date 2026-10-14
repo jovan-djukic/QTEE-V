@@ -288,7 +288,7 @@ def get_configuration(
             print(f"[DEBUG] Sending register...")
             conn.sendmsg(json.dumps({
                 "action": "register",
-                "data": {"relay_id": relay_id, "relay_ip": relay_ip, "platform": "native"}
+                "data": {"relay_id": relay_id, "relay_ip": relay_ip}
             }).encode())
 
             reg_data = json.loads(conn.recvmsg())

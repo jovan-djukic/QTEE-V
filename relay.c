@@ -187,10 +187,8 @@ const char *PQC_CA_CERTIFICATE =
 
 #ifdef RISC_V_ATTESTATION
 const char *CONTROLLER_HOST = "192.168.100.2";
-#define RELAY_PLATFORM "riscv"
 #else
 const char *CONTROLLER_HOST = "127.0.0.1";
-#define RELAY_PLATFORM "native"
 #endif
 
 const char *CONTROLLER_PORT = "8000";
@@ -1296,8 +1294,8 @@ int get_configuration(const char *controller_host, int controller_port,
         char *reg_req = malloc(512);
         snprintf(reg_req, 512,
                  "{\"action\":\"register\",\"data\":"
-                 "{\"relay_id\":\"%s\",\"relay_ip\":\"%s\",\"platform\":\"%s\"}}",
-                 relay_id, relay_ip, RELAY_PLATFORM);
+                 "{\"relay_id\":\"%s\",\"relay_ip\":\"%s\"}}",
+                 relay_id, relay_ip);
 
         fprintf(stderr, "[DEBUG] Sending register...\n");
         int ok = tls_send_msg(ssl, (unsigned char *)reg_req, (int)strlen(reg_req));
@@ -1320,7 +1318,7 @@ int get_configuration(const char *controller_host, int controller_port,
     }
     fprintf(stderr, "[DEBUG] Received nonce=%s\n", nonce);
 
-    /* ── Step 2: Attest — SHA256(nonce_hex + relay_id) ───────────────── */
+    /* ── Step 2: Attest — Keystone report (enclave) or SHA256 dev stand-in ── */
     {
         char *attestation_report = get_attestation_report(nonce, relay_id);
         free(nonce);
