@@ -40,17 +40,19 @@ for key exchange, ML-DSA-65 for certificate signatures.
 | File | Role |
 |------|------|
 | `wolfssl_mldsa.c` / `.py` | C library (+ ctypes bindings) wrapping WolfSSL for ML-DSA-65 signatures and ML-KEM-768 PQC TLS. Shared by the controller, both relay implementations, and the KME simulator. |
-| `controller.py` | Controller — issues ML-DSA-65 X.509 certs (Relay CA), distributes topology configuration, hands out the KME CA's public cert. |
+| `controller.py` | Controller — admits relays on verified attestation, issues ML-DSA-65 X.509 certs (Relay CA) bound to the attested relay ID, distributes topology configuration, hands out the KME CA's public cert. |
+| `keystone_attestation.py` | Controller-side Keystone attestation report verifier (Ed25519/SHA3-512 signature chain, pinned measurements, `relay_id:nonce` binding). |
 | `relay.py` | Python relay node — registers with the controller, relays messages hop-by-hop, talks to its neighboring KME(s). |
-| `relay.c` | C relay node — same protocol as the Python relay, intended for a RISC-V/Keystone enclave. |
+| `relay.c` | C relay node — same protocol as the Python relay. Runs natively, or (built with `-DRISC_V_ATTESTATION`) inside a Keystone enclave as R1. |
 | `test_client_pqc.py` | Application endpoint (`APP_L`/`APP_R`) — sends/receives messages through the relay chain. |
 | `generate_pqc_ca.py` | Generates an ML-DSA-65 CA (used twice — once for `pqc_ca/`, once for `kme_ca/`; see below). |
+| `demo/run_demo.py` | Demonstration harness: end-to-end run with R1 in the enclave plus six negative tests, writing logs to `demo/logs/`. See "Demonstration harness" below. |
 | `protocol.pv` | ProVerif formal model of the controller↔relay and relay↔relay protocol. |
 | `pqc_ca/` | The **Relay CA** — signs the controller's cert and every relay's identity cert. |
 | `kme_ca/` | The **KME CA** — signs each KME's own server cert. Independent of `pqc_ca/`. |
 | `external/next-door-key-simulator/` | Self-hosted ETSI 014 KME simulator (fork), replacing qukaydee.com. See its own README for internals. |
 | `external/wolfssl/` | WolfSSL source, built in three variants — see "WolfSSL" under Prerequisites. Plain clone pinned to a known-good commit, not a submodule (no code changes needed, just build flags). |
-| `external/keystone/` | Fork of [keystone-enclave/keystone](https://github.com/keystone-enclave/keystone) (submodule) — for building the RISC-V cross-toolchain and, eventually, running `relay.c` inside a Keystone enclave. See "RISC-V / Keystone" below. |
+| `external/keystone/` | Fork of [keystone-enclave/keystone](https://github.com/keystone-enclave/keystone) (submodule) — builds the RISC-V cross-toolchain and runs `relay.c` inside a Keystone enclave under QEMU. See "RISC-V / Keystone" below. |
 | `build_wolfssl_variants.sh` | Clones WolfSSL into `external/wolfssl` (if not already present) and builds all three variants. |
 | `build_wolfssl_mldsa_so.sh` | Builds `libwolfssl_mldsa.so` (the ctypes-loadable library) against `external/wolfssl/_install_linux_shared`. |
 
@@ -116,10 +118,12 @@ commit) if it isn't already there:
 ./build_wolfssl_variants.sh linux-shared # or just one variant: riscv | linux-static | linux-shared
 ```
 
-The `riscv` variant needs Keystone's own buildroot cross-compiler built first:
+The `riscv` variant needs Keystone's own buildroot cross-compiler built first. Build only the
+toolchain stage: a full Keystone build compiles the relay enclave, which needs the `riscv`
+WolfSSL variant to exist already (full order under "RISC-V / Keystone" below):
 
 ```bash
-cd external/keystone && make -j$(nproc) && cd ../..   # builds the RISC-V toolchain, among other things
+make -C external/keystone -j$(nproc) BUILDROOT_TARGET=toolchain
 ```
 
 Skip the `riscv` variant entirely if you're not targeting a Keystone enclave — `linux-shared`
@@ -514,11 +518,13 @@ the signing key.
 
 ## Troubleshooting
 
-**"PQC CA files not found" / "KME CA certificate not found"** — generate them (step 3
+**"Relay CA files not found" / "KME CA certificate not found"** — generate them (step 3
 above); the controller fails fast if either is missing.
 
-**"Timeout waiting for relays"** — the controller blocks until all 3 relays have
-registered; make sure all are started.
+**Relays stall after "Requesting configuration..." / controller logs `Waiting... RELAYS = [...]`**
+— the controller answers configuration requests only once all 3 relays have been admitted,
+and waits indefinitely until then; the `RELAYS` list shows which are still missing. Make
+sure all three are started and admitted.
 
 **A relay's KME calls fail / cert rejected** — the KME containers' certs (their own
 KME-CA-signed cert plus a copy of the Relay CA, `RELAY_CA_FILE`) are baked into the image
