@@ -21,7 +21,19 @@ WOLFSSL_REPO="https://github.com/wolfSSL/wolfssl.git"
 WOLFSSL_REF="5512c2d0b4c1979ef02f5d1e15357398232d8528"
 WOLFSSL_DIR="${SCRIPT_DIR}/external/wolfssl"
 KEYSTONE_DIR="${SCRIPT_DIR}/external/keystone"
-CROSS="${KEYSTONE_DIR}/build-generic64/buildroot.build/per-package/keystone-examples/host/bin/riscv64-buildroot-linux-gnu-"
+# Keystone's Buildroot uses per-package directories, so where the cross
+# compiler lives depends on how far the Keystone build has got: after only
+# `make BUILDROOT_TARGET=toolchain` it is in per-package/toolchain/, after a
+# full build it is also in the assembled host/ dir. Take the first that exists.
+BR_DIR="${KEYSTONE_DIR}/build-generic64/buildroot.build"
+CROSS=""
+for d in "$BR_DIR/host/bin" "$BR_DIR/per-package/toolchain/host/bin" \
+         "$BR_DIR/per-package/keystone-examples/host/bin"; do
+    if [ -x "$d/riscv64-buildroot-linux-gnu-gcc" ]; then
+        CROSS="$d/riscv64-buildroot-linux-gnu-"
+        break
+    fi
+done
 
 VARIANT="${1:-all}"
 
@@ -44,18 +56,23 @@ fi
 
 build_riscv() {
     echo "==== Building WolfSSL for RISC-V (Keystone) ===="
-    if [ ! -x "${CROSS}gcc" ]; then
-        echo "ERROR: RISC-V cross compiler not found at ${CROSS}gcc"
-        echo "Build Keystone's buildroot toolchain first (external/keystone)."
+    if [ -z "$CROSS" ]; then
+        echo "ERROR: RISC-V cross compiler not found under $BR_DIR"
+        echo "Build Keystone's buildroot toolchain first:"
+        echo "  cd external/keystone && make -j\$(nproc) BUILDROOT_TARGET=toolchain"
         exit 1
     fi
 
     make distclean >/dev/null 2>&1 || true
 
+    # WOLFSSL_GETRANDOM: seed the RNG with getrandom(), which Eyrie serves
+    # from the Security Monitor (sbi_random). The default /dev/urandom read
+    # would be proxied out to the untrusted host, letting it choose the
+    # entropy behind the enclave's ML-DSA/ML-KEM keys.
     CC="${CROSS}gcc" \
     AR="${CROSS}ar" \
     RANLIB="${CROSS}ranlib" \
-    CFLAGS="-Os -ffunction-sections -fdata-sections -DNO_ASN_TIME -DWOLFSSL_KYBER512 -DWOLFSSL_KYBER768 -DWOLFSSL_KYBER1024 -DWOLFSSL_WC_MLKEM -Wno-error" \
+    CFLAGS="-Os -ffunction-sections -fdata-sections -DNO_ASN_TIME -DWOLFSSL_GETRANDOM -DWOLFSSL_KYBER512 -DWOLFSSL_KYBER768 -DWOLFSSL_KYBER1024 -DWOLFSSL_WC_MLKEM -Wno-error" \
     LDFLAGS="-Wl,--gc-sections" \
     ./configure \
       --host=riscv64-unknown-elf \

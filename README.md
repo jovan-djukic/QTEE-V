@@ -198,11 +198,29 @@ commands above (including `--build`) whenever certs change. See
 ### 5. Start the controller
 
 ```bash
-LD_LIBRARY_PATH=external/wolfssl/_instal_linux_shared/lib \
+LD_LIBRARY_PATH=external/wolfssl/_install_linux_shared/lib \
 python controller.py \
     --pqc-ca-cert ./pqc_ca/ca_certificate.pem --pqc-ca-key ./pqc_ca/ca_private_key.pem \
-    --kme-ca-cert ./kme_ca/ca_certificate.pem
+    --kme-ca-cert ./kme_ca/ca_certificate.pem \
+    --insecure-dev-attestation          # native-only runs; see below
 ```
+
+**Attestation policy.** By default the controller admits a relay only on a Keystone
+attestation report that (a) chains to the pinned root key, (b) carries the pinned enclave
+measurement, and (c) binds `"<relay_id>:<nonce>"` for the nonce issued on that connection
+(`keystone_attestation.py`). The relay's platform is inferred from the report, never taken
+from the relay. Flags:
+
+| Flag | Meaning |
+|------|---------|
+| `--enclave-measurement HEX` | SHA3-512 of the release enclave (see "RISC-V / Keystone"). Without it no enclave relay is admitted. |
+| `--sm-measurement HEX` | Optionally also pin the Security Monitor hash. |
+| `--attestation-root-key HEX` | Ed25519 device root key. Defaults to Keystone's public **test** key, which is only meaningful under QEMU. |
+| `--insecure-dev-attestation [R0,R2]` | **Dev only.** Accept the SHA256 stand-in report (no TEE) from the listed relays, or from all relays with no value. Every use is logged as a warning. |
+
+Native (non-enclave) relays are refused unless `--insecure-dev-attestation` covers them, so
+the all-native deployments below need the flag. For R1 in an enclave with R0/R2 native, use
+`--enclave-measurement <hex> --insecure-dev-attestation R0,R2`.
 
 Opens two ports:
 
@@ -238,8 +256,10 @@ LD_LIBRARY_PATH=external/wolfssl/_install_linux_shared/lib \
 ```
 
 Each relay, on connecting: verifies the controller's cert against the pre-deployed Relay
-CA → registers → receives a nonce → signs `(node_id, nonce, SHA256(nonce||node_id))` with
-its hardware key as an attestation report → receives topology + the KME CA cert →
+CA → registers → receives a nonce → sends an attestation report (inside a Keystone enclave:
+a Security-Monitor-signed report binding `relay_id:nonce` and the enclave measurement;
+natively: the SHA256 dev stand-in, accepted only under `--insecure-dev-attestation`) →
+receives topology + the KME CA cert →
 generates an ML-DSA-65 keypair and receives its signed identity cert → enters the relay
 loop, accepting mTLS from its configured neighbors and calling its neighboring KME(s) for
 key material using that same identity cert.
@@ -293,29 +313,78 @@ Terminal 5:  python test_client_pqc.py --send ...
 
 ## RISC-V / Keystone
 
-`external/keystone` is a fork of [keystone-enclave/keystone](https://github.com/keystone-enclave/keystone),
-submoduled for two things: building the RISC-V cross-compiler toolchain used for the
-`riscv` WolfSSL variant (see "WolfSSL" above), and eventually running `relay.c` inside a
-Keystone enclave. The fork exists because that second part needs real changes to Keystone's
-own tree, not something patchable from outside:
+`external/keystone` is a fork of [keystone-enclave/keystone](https://github.com/keystone-enclave/keystone)
+that runs `relay.c` as R1 inside a Keystone enclave under QEMU. Changes in the fork:
 
-- `mkutils/plat/generic/run.mk` — an additional port mapping (the enclave's relay needs to
-  reach the controller and its neighbors from inside QEMU).
-- `runtime/include/mm/vm_defs.h` — a larger enclave stack size (WolfSSL's ML-DSA-65/ML-KEM
-  operations use more stack than Keystone's default eapp allowance).
-- A new `examples/relay/` directory, alongside Keystone's existing `examples/hello`,
-  `examples/attestation`, etc.
+- `mkutils/plat/generic/run.mk` — forwards host port 9001 into the guest, so R0/R2 on the
+  host reach the enclave R1 at `127.0.0.1:9001`. Outbound traffic from the guest (controller,
+  R0/R2, KMEs) goes through the QEMU gateway `192.168.100.2`, which is the host.
+- `runtime/include/mm/vm_defs.h` — larger Eyrie stack (`0x80000`) for WolfSSL's ML-DSA-65/ML-KEM.
+- `examples/relay/` — builds this repo's own `relay.c` (no copy) with `-DRISC_V_ATTESTATION`
+  against `external/wolfssl/_install_riscv`. The project root comes from
+  `overlays/keystone/package/keystone-examples/keystone-examples.mk` (`QTEE_ROOT`). The host
+  runner has a `--measure` mode that prints the enclave measurement.
 
-**Status: the toolchain build is done and verified (the `riscv` WolfSSL variant cross-compiles
-correctly — checked with `file` against an extracted `.o`, not just trusted the build log);
-the three tree changes above are not yet made.** The cross-compiler alone is already useful
-for building/testing the RISC-V WolfSSL variant even before the enclave integration lands.
-
-Build the toolchain (needed before `./build_wolfssl_variants.sh riscv`):
+### Build (first time is long: Buildroot builds the toolchain, kernel, QEMU and rootfs)
 
 ```bash
-cd external/keystone && make -j$(nproc)
+cd external/keystone && git submodule update --init buildroot && cd ../..
+make -C external/keystone -j$(nproc) BUILDROOT_TARGET=toolchain   # cross-compiler only
+./build_wolfssl_variants.sh riscv          # -> external/wolfssl/_install_riscv
+./build_wolfssl_variants.sh linux-shared   # same source tree: rebuild the native lib after
+make -C external/keystone -j$(nproc)       # everything, incl. relay.ke in the rootfs
 ```
+
+The `riscv` WolfSSL variant is built with `-DWOLFSSL_GETRANDOM`: Eyrie serves `getrandom()`
+from the Security Monitor, whereas a `/dev/urandom` read would be proxied to the untrusted
+host.
+
+After changing `relay.c`, rebuild the enclave binary and the rootfs. Buildroot's
+`keystone-examples-rebuild` does **not** recompile it, because `relay.c` lives outside the
+package tree:
+
+```bash
+make -C external/keystone/build-generic64/buildroot.build/build/keystone-examples-*/ examples
+make -C external/keystone -j$(nproc) BUILDROOT_TARGET=keystone-examples-rebuild
+make -C external/keystone -j$(nproc)
+```
+
+### Run (R1 in the enclave, R0/R2 native)
+
+```bash
+make -C external/keystone run      # QEMU console; login root / sifive (or ssh -p 9821 root@localhost
+                                   # -i external/keystone/build-generic64/overlay/root/.ssh/id-rsa)
+```
+
+In the guest, get the measurement to pin. It is computed from the binaries by
+`Enclave::measure()` and doesn't depend on running the enclave:
+
+```sh
+modprobe keystone-driver
+/usr/share/keystone/examples/relay.ke --noexec --target /tmp/relay
+cd /tmp/relay && ./relay-runner relay eyrie-rt loader.bin --measure
+```
+
+On the host (KME simulator already up):
+
+```bash
+python controller.py --pqc-ca-cert ./pqc_ca/ca_certificate.pem --pqc-ca-key ./pqc_ca/ca_private_key.pem \
+    --kme-ca-cert ./kme_ca/ca_certificate.pem \
+    --enclave-measurement <hex from --measure> --insecure-dev-attestation R0,R2
+python relay.py 0 2
+```
+
+In the guest: `cd /tmp/relay && ./relay-runner relay eyrie-rt loader.bin` (or run
+`/usr/share/keystone/examples/relay.ke`). It defaults to `R1 9001`. Then run steps 7–8 above.
+The controller logs `[R1] Keystone report verified: enclave=<hex>...` and
+`Authenticated (platform=riscv)`.
+
+An enclave built from modified source produces a different measurement and is refused with
+`enclave measurement mismatch`. A native relay presenting as R1 is refused because
+`--insecure-dev-attestation` doesn't cover it.
+
+QEMU's root key is Keystone's public test key, so under QEMU this demonstrates the
+attestation mechanism, not a hardware root of trust.
 
 ---
 
@@ -326,7 +395,7 @@ cd external/keystone && make -j$(nproc)
 | TLS 1.3 key exchange | ML-KEM-768 (strict — no classical fallback) | Session key establishment, everywhere in the system |
 | Certificate signatures | ML-DSA-65 | Identity: controller, relays, KMEs |
 | Relayed-message encryption | AES (keyed by the QKD-derived key from the KME) | The actual hop-to-hop payload, inside the mTLS tunnel |
-| Hardware attestation | ML-DSA-65 (`hw_sk`) | Proves a relay's registration request comes from genuine enclave hardware, not a software impersonator |
+| Enclave attestation | Ed25519 with SHA3-512 (Keystone's variant, not RFC 8032) | Device root key endorses the Security Monitor; the SM signs the enclave measurement and `relay_id:nonce` |
 
 ML-KEM and ML-DSA are independent PQC primitives serving different purposes — swapping
 one doesn't affect the other. Everywhere `ML-KEM-768` is used it's the *only* configured
