@@ -412,7 +412,7 @@ running) and the KME simulator (started if not running), and writes timestamped 
 | `test3_kme_no_relay_cert.log` | KME `enc_keys` request without a certificate, and with a rogue-CA one: refused |
 | `test4_replay.log` | R1's genuine report from the demo run replayed in a new session: rejected (stale nonce) |
 | `test5_modified_enclave.log` | enclave image with one byte changed runs as R1: measurement mismatch, refused |
-| `test6_cn_mismatch.log` | dev-admitted R0 asks for a CN=R1 certificate: refused (CN=R0 control: issued) |
+| `test6_cn_mismatch.log` | dev-admitted R0 asks for a CN=R1 certificate: refused (CN=R0 control: issued; a second certificate in the same session: refused) |
 | `summary.txt` | expected vs. observed for each |
 
 ```bash

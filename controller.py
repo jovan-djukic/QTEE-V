@@ -519,6 +519,8 @@ class RelaySession:
         # taken from the relay. Kept independent of relay_id, which must
         # stay a clean "R0"/"R1"/"R2" to match the KME's fixed ATTACHED_SAE_ID.
         self.platform: Optional[str] = None
+        # One certificate per attestation (protocol.pv Q3).
+        self.cert_issued: bool = False
 
 
 class ConnContext:
@@ -774,6 +776,9 @@ def handle_generate_certs(data: dict, ctx: ConnContext) -> dict:
         relay_id = session.relay_id
 
         print(f"[{relay_id}] Certificate generation request")
+        if session.cert_issued:
+            print(f"[{relay_id}] Refused: a certificate was already issued for this attestation")
+            return {"error": "Certificate already issued for this session"}
 
         pqc_csr = data.get("pqc_csr", {})
         # The certificate's CN is the relay's identity everywhere (neighbour
@@ -789,6 +794,7 @@ def handle_generate_certs(data: dict, ctx: ConnContext) -> dict:
 
         if not pqc_cert:
             return {"error": "Failed to sign PQC certificate"}
+        session.cert_issued = True
 
         # This one cert (Relay CA-signed) is also presented to KMEs as the
         # relay's SAE identity -- no separate KME-facing cert or CSR needed.

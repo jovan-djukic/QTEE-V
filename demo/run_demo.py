@@ -610,12 +610,14 @@ enclave; the controller is still pinned to the release measurement.""", expected
 
 
 def test6_cn(out, meas):
-    expected = "certificate for CN=R1 refused; certificate for its own CN=R0 issued (control)"
+    expected = ("certificate for CN=R1 refused; certificate for its own CN=R0 issued (control); "
+                "a second certificate in the same session refused")
     log = test_log(out, "test6_cn_mismatch", "admitted relay requests another relay's CN -> refused", """
 A non-enclave client is admitted as R0 under --insecure-dev-attestation R0 (as
 in the mixed deployment) and asks for a certificate with CN=R1, the enclave
 relay's identity. With it, it could pass R0's/R2's whitelists and R1's KMEs as
-R1. Control: the same connection then asks for CN=R0.""", expected)
+R1. Control: the same connection then asks for CN=R0, and then for CN=R0 again
+(one certificate per attestation).""", expected)
     ctrl = start_controller(log, meas, ["--insecure-dev-attestation", "R0"], os.path.join(out, "evidence_test6"))
     replies = {}
     try:
@@ -626,19 +628,21 @@ R1. Control: the same connection then asks for CN=R0.""", expected)
             log.emit("attacker", f"attest R0 (dev) -> {rpc(conn, 'attest', {'relay_id': 'R0', 'attestation_report': report})}")
             signer = wolfssl_mldsa.Signature("ML-DSA-65")
             pk = signer.generate_keypair()
-            for cn in ("R1", "R0"):
+            for label, cn in (("R1", "R1"), ("R0", "R0"), ("R0 again", "R0")):
                 r = rpc(conn, "generate_certificates",
                         {"relay_id": "R0", "pqc_csr": {"subject_cn": cn, "public_key": base64.b64encode(pk).decode()}})
-                replies[cn] = "certificate issued" if "pqc_certificate" in r else r
-                log.emit("attacker", f"CSR CN={cn} -> {replies[cn]}")
+                replies[label] = "certificate issued" if "pqc_certificate" in r else r
+                log.emit("attacker", f"CSR CN={cn} ({label}) -> {replies[label]}")
         sock.close()
     except Exception as e:
         replies["error"] = f"{type(e).__name__}: {e}"
     time.sleep(1)
     ctrl.stop()
-    ok = isinstance(replies.get("R1"), dict) and replies.get("R0") == "certificate issued"
+    ok = (isinstance(replies.get("R1"), dict) and replies.get("R0") == "certificate issued"
+          and isinstance(replies.get("R0 again"), dict))
     verdict(log, "test6: certificate for another relay's CN", expected,
-            f"CN=R1: {replies.get('R1')}; CN=R0: {replies.get('R0')}", ok)
+            f"CN=R1: {replies.get('R1')}; CN=R0: {replies.get('R0')}; "
+            f"CN=R0 again: {replies.get('R0 again')}", ok)
     log.close()
 
 
