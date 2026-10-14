@@ -386,6 +386,14 @@ An enclave built from modified source produces a different measurement and is re
 QEMU's root key is Keystone's public test key, so under QEMU this demonstrates the
 attestation mechanism, not a hardware root of trust.
 
+Relay logs are timestamped to the microsecond (`HH:MM:SS.uuuuuu`) for per-hop latency, and
+every relay prints the full recovered plaintext (useful for the demo, but inside an enclave it
+hands the payload to the untrusted host through stderr). Inside the enclave, Eyrie answers
+`clock_gettime()` from the cycle counter (`rdcycle` / 1 GHz): R1's timestamps count from guest
+boot, not wall time. Compare them only with each other, and use R0/R2 (host clock) for
+end-to-end hop timing. Rebuilding `relay.c` changes the enclave measurement, so re-run
+`--measure` and update `--enclave-measurement` after every change.
+
 ---
 
 ## Cryptography

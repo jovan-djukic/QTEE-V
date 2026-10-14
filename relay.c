@@ -557,10 +557,16 @@ void handle_sigint(int sig) { (void)sig; keep_running = 0; }
 
 /* ==================== Utility Functions ==================== */
 
+/* HH:MM:SS.uuuuuu -- microseconds so per-hop forwarding latency can be
+ * measured. Inside a Keystone enclave, Eyrie answers clock_gettime() from the
+ * cycle counter (rdcycle / 1 GHz), i.e. time since the guest booted, not wall
+ * time: compare enclave timestamps only with each other, not with the host's. */
 void get_timestamp(char *buf, size_t len) {
-    time_t now = time(NULL);
-    struct tm *tm_info = localtime(&now);
-    strftime(buf, len, "%H:%M:%S", tm_info);
+    struct timespec now;
+    clock_gettime(CLOCK_REALTIME, &now);
+    struct tm *tm_info = localtime(&now.tv_sec);
+    size_t n = strftime(buf, len, "%H:%M:%S", tm_info);
+    snprintf(buf + n, len - n, ".%06ld", now.tv_nsec / 1000);
 }
 
 static int init_rng(void) {
@@ -1995,6 +2001,7 @@ pqc_message_t pqc_receive_message(int port, const unsigned char *my_sk,
 
     /* Whitelist check */
     if (whitelist && strlen(whitelist) > 0 && !strstr(whitelist, peer_cn)) {
+        get_timestamp(ts, sizeof(ts));
         fprintf(stderr, "[%s][%s] Rejected: %s not in whitelist\n", ts, relay_id, peer_cn);
         wolfSSL_shutdown(ssl); wolfSSL_free(ssl);
         close(client); close(server); wolfSSL_CTX_free(ctx);
@@ -2076,9 +2083,11 @@ int main(int argc, char *argv[]) {
 
     get_timestamp(ts, sizeof(ts));
     fprintf(stderr, "[%s][%s] Configuration received\n", ts, relay_id);
+    get_timestamp(ts, sizeof(ts));
     fprintf(stderr, "[%s][%s] Left: %s (%s)\n", ts, relay_id,
             config->left_relay_id  ? config->left_relay_id  : "none",
             config->left_relay_ip ? config->left_relay_ip : "");
+    get_timestamp(ts, sizeof(ts));
     fprintf(stderr, "[%s][%s] Right: %s (%s)\n", ts, relay_id,
             config->right_relay_id  ? config->right_relay_id  : "none",
             config->right_relay_ip ? config->right_relay_ip : "");
@@ -2130,6 +2139,7 @@ int main(int argc, char *argv[]) {
 
         /* Decrypt with KME key */
         if (kme_dec && strlen(kme_dec) > 0 && from_key_id && strlen(from_key_id) > 0) {
+            get_timestamp(ts, sizeof(ts));
             fprintf(stderr, "[%s][%s] Getting key from KME %s...\n", ts, relay_id, kme_dec);
             char *key_resp = kme_get_key_with_id(config->pqc_private_key,
                                                   config->pqc_certificate, config->kme_ca_certificate,
@@ -2137,6 +2147,7 @@ int main(int argc, char *argv[]) {
             if (key_resp) {
                 char *key_val = extract_json_string(key_resp, "key");
                 if (key_val) {
+                    get_timestamp(ts, sizeof(ts));
                     fprintf(stderr, "[%s][%s] Decrypting with QKD key...\n", ts, relay_id);
                     plaintext = qkd_decrypt(from_ct, key_val);
                     free(key_val);
@@ -2148,13 +2159,14 @@ int main(int argc, char *argv[]) {
         if (!plaintext) plaintext = from_ct ? strdup(from_ct) : strdup("");
 
         get_timestamp(ts, sizeof(ts));
-        fprintf(stderr, "[%s][%s] Plaintext: %.50s...\n", ts, relay_id, plaintext);
+        fprintf(stderr, "[%s][%s] Plaintext: %s\n", ts, relay_id, plaintext);
 
         char *to_ct     = NULL;
         char *to_key_id = NULL;
 
         /* Encrypt with KME key */
         if (kme_enc && strlen(kme_enc) > 0) {
+            get_timestamp(ts, sizeof(ts));
             fprintf(stderr, "[%s][%s] Getting key from KME %s...\n", ts, relay_id, kme_enc);
             char *key_resp = kme_get_key(config->pqc_private_key,
                                           config->pqc_certificate, config->kme_ca_certificate,
@@ -2163,6 +2175,7 @@ int main(int argc, char *argv[]) {
                 char *key_val = extract_json_string(key_resp, "key");
                 to_key_id = extract_json_string(key_resp, "key_ID");
                 if (key_val) {
+                    get_timestamp(ts, sizeof(ts));
                     fprintf(stderr, "[%s][%s] Encrypting with QKD key...\n", ts, relay_id);
                     to_ct = qkd_encrypt(plaintext, key_val);
                     free(key_val);

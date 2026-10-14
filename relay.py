@@ -384,11 +384,11 @@ def pqc_send_message(
 
         with wolfssl_mldsa.pqc_tls_client_connect(sock.fileno(), cert_der, pkcs8_der, ca_der) as conn:
             peer_cn, _, _, _, _ = _parse_x509_cert(conn.peer_cert_der())
-            print(f"[{datetime.now():%H:%M:%S}][{relay_id}] PQC mTLS connected to {peer_cn} at {host}:{port}")
+            print(f"[{datetime.now():%H:%M:%S.%f}][{relay_id}] PQC mTLS connected to {peer_cn} at {host}:{port}")
 
             conn.sendmsg(json.dumps(message).encode())
             ack = conn.recvmsg()
-            print(f"[{datetime.now():%H:%M:%S}][{relay_id}] Received ack: {ack.decode()}")
+            print(f"[{datetime.now():%H:%M:%S.%f}][{relay_id}] Received ack: {ack.decode()}")
 
 
 def pqc_receive_message(
@@ -410,7 +410,7 @@ def pqc_receive_message(
         server_sock.bind((host, port))
         server_sock.listen(5)
 
-        print(f"[{datetime.now():%H:%M:%S}][{relay_id}] PQC mTLS listener on {host}:{port}")
+        print(f"[{datetime.now():%H:%M:%S.%f}][{relay_id}] PQC mTLS listener on {host}:{port}")
 
         conn_sock, addr = server_sock.accept()
         conn_sock.settimeout(30)
@@ -422,7 +422,7 @@ def pqc_receive_message(
                 if whitelist and peer_cn not in whitelist:
                     raise ValueError(f"Client {peer_cn} not in whitelist")
 
-                print(f"[{datetime.now():%H:%M:%S}][{relay_id}] PQC mTLS connection from {peer_cn} at {addr}")
+                print(f"[{datetime.now():%H:%M:%S.%f}][{relay_id}] PQC mTLS connection from {peer_cn} at {addr}")
 
                 message = json.loads(conn.recvmsg().decode())
                 conn.sendmsg(b"RECEIVED")
@@ -623,7 +623,7 @@ def main(relay_id: str, port: int, print_semaphore: Semaphore) -> None:
     configuration = result["configuration"]
     
     print_semaphore.acquire()
-    print(f"\n[{datetime.now():%H:%M:%S}][{relay_id}] Configuration received:")
+    print(f"\n[{datetime.now():%H:%M:%S.%f}][{relay_id}] Configuration received:")
     print(json.dumps({k: v for k, v in configuration.items() if k != "pqc_ca_certificate"}, indent=2))
     print_semaphore.release()
     
@@ -655,41 +655,41 @@ def main(relay_id: str, port: int, print_semaphore: Semaphore) -> None:
     position = "left" if not left_kme else ("right" if not right_kme else "middle")
     
     print_semaphore.acquire()
-    print(f"[{datetime.now():%H:%M:%S}][{relay_id}] Position: {position}")
-    print(f"[{datetime.now():%H:%M:%S}][{relay_id}] Whitelist: {whitelist}")
-    print(f"[{datetime.now():%H:%M:%S}][{relay_id}] Left neighbor: {left_relay_id} at {left_relay_ip}")
-    print(f"[{datetime.now():%H:%M:%S}][{relay_id}] Right neighbor: {right_relay_id} at {right_relay_ip}")
+    print(f"[{datetime.now():%H:%M:%S.%f}][{relay_id}] Position: {position}")
+    print(f"[{datetime.now():%H:%M:%S.%f}][{relay_id}] Whitelist: {whitelist}")
+    print(f"[{datetime.now():%H:%M:%S.%f}][{relay_id}] Left neighbor: {left_relay_id} at {left_relay_ip}")
+    print(f"[{datetime.now():%H:%M:%S.%f}][{relay_id}] Right neighbor: {right_relay_id} at {right_relay_ip}")
     print_semaphore.release()
     
     # Verify PQC CA certificate
     if PQC_CA_CERTIFICATE:
         valid, cn, _ = verify_pqc_certificate(pqc_cert, PQC_CA_CERTIFICATE)
         print_semaphore.acquire()
-        print(f"[{datetime.now():%H:%M:%S}][{relay_id}] PQC certificate verification: {'✓' if valid else '✗'} (CN={cn})")
+        print(f"[{datetime.now():%H:%M:%S.%f}][{relay_id}] PQC certificate verification: {'✓' if valid else '✗'} (CN={cn})")
         print_semaphore.release()
     
     # Test KME connectivity (using this relay's own identity cert as its SAE cert)
     if left_kme:
         print_semaphore.acquire()
-        print(f"[{datetime.now():%H:%M:%S}][{relay_id}] Testing left KME ({left_kme})...")
+        print(f"[{datetime.now():%H:%M:%S.%f}][{relay_id}] Testing left KME ({left_kme})...")
         try:
             status = kme_get_status(pqc_sk, pqc_cert, KME_CA_CERTIFICATE, left_kme_host, left_kme_port, left_kme_peer)
-            print(f"[{datetime.now():%H:%M:%S}][{relay_id}] Left KME status: {status.status_code}")
+            print(f"[{datetime.now():%H:%M:%S.%f}][{relay_id}] Left KME status: {status.status_code}")
         except Exception as e:
-            print(f"[{datetime.now():%H:%M:%S}][{relay_id}] Left KME error: {e}")
+            print(f"[{datetime.now():%H:%M:%S.%f}][{relay_id}] Left KME error: {e}")
         print_semaphore.release()
 
     if right_kme:
         print_semaphore.acquire()
-        print(f"[{datetime.now():%H:%M:%S}][{relay_id}] Testing right KME ({right_kme})...")
+        print(f"[{datetime.now():%H:%M:%S.%f}][{relay_id}] Testing right KME ({right_kme})...")
         try:
             status = kme_get_status(pqc_sk, pqc_cert, KME_CA_CERTIFICATE, right_kme_host, right_kme_port, right_kme_peer)
-            print(f"[{datetime.now():%H:%M:%S}][{relay_id}] Right KME status: {status.status_code}")
+            print(f"[{datetime.now():%H:%M:%S.%f}][{relay_id}] Right KME status: {status.status_code}")
         except Exception as e:
-            print(f"[{datetime.now():%H:%M:%S}][{relay_id}] Right KME error: {e}")
+            print(f"[{datetime.now():%H:%M:%S.%f}][{relay_id}] Right KME error: {e}")
         print_semaphore.release()
     
-    print(f"[{datetime.now():%H:%M:%S}][{relay_id}] Ready - entering message relay loop")
+    print(f"[{datetime.now():%H:%M:%S.%f}][{relay_id}] Ready - entering message relay loop")
     
     # ==================== Main Message Relay Loop ====================
     while True:
@@ -706,7 +706,7 @@ def main(relay_id: str, port: int, print_semaphore: Semaphore) -> None:
             )
             
             print_semaphore.acquire()
-            print(f"[{datetime.now():%H:%M:%S}][{relay_id}] Received message from {sender_cn}")
+            print(f"[{datetime.now():%H:%M:%S.%f}][{relay_id}] Received message from {sender_cn}")
             print_semaphore.release()
             
             # Determine direction (from left or right)
@@ -734,7 +734,7 @@ def main(relay_id: str, port: int, print_semaphore: Semaphore) -> None:
             
             # Decrypt incoming message (if we have a KME on that side)
             if kme_decrypt and from_key_id:
-                print(f"[{datetime.now():%H:%M:%S}][{relay_id}] Getting decryption key from KME {kme_decrypt}...")
+                print(f"[{datetime.now():%H:%M:%S.%f}][{relay_id}] Getting decryption key from KME {kme_decrypt}...")
                 get_key_response = kme_get_key_with_id(
                     private_key=pqc_sk,
                     certificate=pqc_cert,
@@ -745,19 +745,19 @@ def main(relay_id: str, port: int, print_semaphore: Semaphore) -> None:
                     key_id=from_key_id
                 )
                 from_key = get_key_response["keys"][0]["key"]
-                print(f"[{datetime.now():%H:%M:%S}][{relay_id}] Decrypting with QKD key...")
+                print(f"[{datetime.now():%H:%M:%S.%f}][{relay_id}] Decrypting with QKD key...")
                 plaintext = qkd_decrypt(from_ciphertext, from_key)
             else:
                 # No KME on incoming side (we're at an edge)
                 plaintext = from_ciphertext
             
             print_semaphore.acquire()
-            print(f"[{datetime.now():%H:%M:%S}][{relay_id}] Plaintext: {plaintext[:100]}...")
+            print(f"[{datetime.now():%H:%M:%S.%f}][{relay_id}] Plaintext: {plaintext}")
             print_semaphore.release()
             
             # Encrypt for outgoing (if we have a KME on that side)
             if kme_encrypt:
-                print(f"[{datetime.now():%H:%M:%S}][{relay_id}] Getting encryption key from KME {kme_encrypt}...")
+                print(f"[{datetime.now():%H:%M:%S.%f}][{relay_id}] Getting encryption key from KME {kme_encrypt}...")
                 get_key_response = kme_get_key(
                     private_key=pqc_sk,
                     certificate=pqc_cert,
@@ -768,7 +768,7 @@ def main(relay_id: str, port: int, print_semaphore: Semaphore) -> None:
                 )
                 to_key_id = get_key_response["keys"][0]["key_ID"]
                 to_key = get_key_response["keys"][0]["key"]
-                print(f"[{datetime.now():%H:%M:%S}][{relay_id}] Encrypting with QKD key...")
+                print(f"[{datetime.now():%H:%M:%S.%f}][{relay_id}] Encrypting with QKD key...")
                 to_ciphertext = qkd_encrypt(plaintext, to_key)
             else:
                 # No KME on outgoing side (we're at an edge)
@@ -779,7 +779,7 @@ def main(relay_id: str, port: int, print_semaphore: Semaphore) -> None:
             
             # Forward to next hop via PQC channel
             to_host, to_port = to_ip.split(":")
-            print(f"[{datetime.now():%H:%M:%S}][{relay_id}] Forwarding to {to_ip}...")
+            print(f"[{datetime.now():%H:%M:%S.%f}][{relay_id}] Forwarding to {to_ip}...")
             
             try:
                 pqc_send_message(
@@ -791,15 +791,15 @@ def main(relay_id: str, port: int, print_semaphore: Semaphore) -> None:
                     message=to_message,
                     relay_id=relay_id
                 )
-                print(f"[{datetime.now():%H:%M:%S}][{relay_id}] Message forwarded successfully")
+                print(f"[{datetime.now():%H:%M:%S.%f}][{relay_id}] Message forwarded successfully")
             except Exception as e:
                 print_semaphore.acquire()
-                print(f"[{datetime.now():%H:%M:%S}][{relay_id}] Error forwarding: {e}")
+                print(f"[{datetime.now():%H:%M:%S.%f}][{relay_id}] Error forwarding: {e}")
                 print_semaphore.release()
                 
         except Exception as e:
             print_semaphore.acquire()
-            print(f"[{datetime.now():%H:%M:%S}][{relay_id}] Error in relay loop: {e}")
+            print(f"[{datetime.now():%H:%M:%S.%f}][{relay_id}] Error in relay loop: {e}")
             print_semaphore.release()
             import traceback
             traceback.print_exc()
