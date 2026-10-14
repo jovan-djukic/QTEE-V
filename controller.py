@@ -103,6 +103,8 @@ ATTESTATION_ROOT_KEY: bytes = keystone_attestation.KEYSTONE_TEST_DEV_PUBLIC_KEY
 # None => nobody (default), "*" => everybody, else a set of relay_ids.
 DEV_ATTESTATION_RELAYS = None
 DEV_REPORT_PREFIX = "attestation_report:"
+# Directory to keep every received attestation report + verdict in (None: off)
+ATTESTATION_EVIDENCE_DIR: Optional[str] = None
 
 # CA file paths
 PQC_CA_CERT_PATH = "./pqc_ca/ca_certificate.pem"
@@ -582,6 +584,27 @@ def verify_attestation(relay_id: str, nonce: bytes, report: str) -> str:
     return "riscv"
 
 
+def save_attestation_evidence(relay_id: str, nonce: bytes, report: str,
+                              platform: Optional[str], error: Optional[str]) -> None:
+    """Keep each received attestation report and its verdict (audit trail,
+    --attestation-evidence-dir). Reports carry no secrets."""
+    if ATTESTATION_EVIDENCE_DIR is None:
+        return
+    now = datetime.now()
+    record = {
+        "time": now.isoformat(timespec="microseconds"),
+        "relay_id": relay_id,
+        "nonce": nonce.hex(),
+        "attestation_report": report,
+        "verdict": "accepted" if error is None else "rejected",
+        "platform": platform,
+        "error": error,
+    }
+    name = f"{now:%Y%m%dT%H%M%S%f}_{relay_id}_{record['verdict']}.json"
+    with open(os.path.join(ATTESTATION_EVIDENCE_DIR, name), "w") as f:
+        json.dump(record, f, indent=2)
+
+
 # ==================== Protocol Handlers (sync, thread-safe) ====================
 
 def handle_register(data: dict, ctx: ConnContext) -> dict:
@@ -627,7 +650,9 @@ def handle_attest(data: dict, ctx: ConnContext) -> dict:
 
         try:
             platform = verify_attestation(relay_id, nonce, attestation_report)
+            save_attestation_evidence(relay_id, nonce, attestation_report, platform, None)
         except AttestationError as e:
+            save_attestation_evidence(relay_id, nonce, attestation_report, None, str(e))
             print(f"[{relay_id}] Attestation verification failed: {e}")
             with sessions_lock:
                 if SESSIONS.get(relay_id) is session:
@@ -751,6 +776,14 @@ def handle_generate_certs(data: dict, ctx: ConnContext) -> dict:
         print(f"[{relay_id}] Certificate generation request")
 
         pqc_csr = data.get("pqc_csr", {})
+        # The certificate's CN is the relay's identity everywhere (neighbour
+        # whitelists, KME SAE ID), so it must be the relay_id this connection
+        # attested as -- otherwise e.g. a dev-admitted native R0 could obtain
+        # a certificate for the enclave relay R1.
+        if pqc_csr.get("subject_cn") != relay_id:
+            print(f"[{relay_id}] Refused: CSR subject CN {pqc_csr.get('subject_cn')!r} "
+                  f"is not the attested relay_id")
+            return {"error": "CSR subject CN does not match attested relay_id"}
         print(f"[{relay_id}] Signing PQC certificate...")
         pqc_cert = sign_pqc_csr(pqc_csr)
 
@@ -759,7 +792,8 @@ def handle_generate_certs(data: dict, ctx: ConnContext) -> dict:
 
         # This one cert (Relay CA-signed) is also presented to KMEs as the
         # relay's SAE identity -- no separate KME-facing cert or CSR needed.
-        print(f"[{relay_id}] Certificate signed and sent")
+        print(f"[{relay_id}] Issued ML-DSA-65 certificate CN={relay_id} "
+              f"(issuer CN={PQC_CA_SUBJECT_CN}, platform={session.platform})")
 
         return {
             "pqc_certificate": pqc_cert
@@ -884,6 +918,8 @@ parser.add_argument("--insecure-dev-attestation", nargs="?", const="*", default=
                     metavar="RELAY_IDS",
                     help="DEV ONLY: accept the SHA256 stand-in report (no TEE) from the given "
                          "comma-separated relays, e.g. R0,R2; with no value, from all relays")
+parser.add_argument("--attestation-evidence-dir", default=None, metavar="DIR",
+                    help="Save every received attestation report and its verdict as JSON in DIR")
 
 args = parser.parse_args()
 
@@ -915,6 +951,10 @@ if args.attestation_root_key:
 if args.insecure_dev_attestation is not None:
     DEV_ATTESTATION_RELAYS = ("*" if args.insecure_dev_attestation == "*" else
                               {r.strip() for r in args.insecure_dev_attestation.split(",") if r.strip()})
+
+if args.attestation_evidence_dir:
+    ATTESTATION_EVIDENCE_DIR = args.attestation_evidence_dir
+    os.makedirs(ATTESTATION_EVIDENCE_DIR, exist_ok=True)
 
 if ENCLAVE_MEASUREMENT is None:
     print("[!] No --enclave-measurement: enclave relays will be refused")

@@ -734,7 +734,7 @@ def main(relay_id: str, port: int, print_semaphore: Semaphore) -> None:
             
             # Decrypt incoming message (if we have a KME on that side)
             if kme_decrypt and from_key_id:
-                print(f"[{datetime.now():%H:%M:%S.%f}][{relay_id}] Getting decryption key from KME {kme_decrypt}...")
+                print(f"[{datetime.now():%H:%M:%S.%f}][{relay_id}] Getting decryption key from KME {kme_decrypt} key_ID={from_key_id}...")
                 get_key_response = kme_get_key_with_id(
                     private_key=pqc_sk,
                     certificate=pqc_cert,
@@ -745,7 +745,7 @@ def main(relay_id: str, port: int, print_semaphore: Semaphore) -> None:
                     key_id=from_key_id
                 )
                 from_key = get_key_response["keys"][0]["key"]
-                print(f"[{datetime.now():%H:%M:%S.%f}][{relay_id}] Decrypting with QKD key...")
+                print(f"[{datetime.now():%H:%M:%S.%f}][{relay_id}] Decrypting with QKD key key_ID={from_key_id}...")
                 plaintext = qkd_decrypt(from_ciphertext, from_key)
             else:
                 # No KME on incoming side (we're at an edge)
@@ -768,7 +768,7 @@ def main(relay_id: str, port: int, print_semaphore: Semaphore) -> None:
                 )
                 to_key_id = get_key_response["keys"][0]["key_ID"]
                 to_key = get_key_response["keys"][0]["key"]
-                print(f"[{datetime.now():%H:%M:%S.%f}][{relay_id}] Encrypting with QKD key...")
+                print(f"[{datetime.now():%H:%M:%S.%f}][{relay_id}] Encrypting with QKD key key_ID={to_key_id}...")
                 to_ciphertext = qkd_encrypt(plaintext, to_key)
             else:
                 # No KME on outgoing side (we're at an edge)
@@ -779,7 +779,12 @@ def main(relay_id: str, port: int, print_semaphore: Semaphore) -> None:
             
             # Forward to next hop via PQC channel
             to_host, to_port = to_ip.split(":")
-            print(f"[{datetime.now():%H:%M:%S.%f}][{relay_id}] Forwarding to {to_ip}...")
+            if to_key_id:
+                print(f"[{datetime.now():%H:%M:%S.%f}][{relay_id}] Forwarding ciphertext "
+                      f"({len(to_ciphertext)} chars, key_ID={to_key_id}) to {to_ip}: {to_ciphertext[:64]}...")
+            else:
+                print(f"[{datetime.now():%H:%M:%S.%f}][{relay_id}] Forwarding to {to_ip} "
+                      f"(edge hop: PQC TLS only, no QKD layer)...")
             
             try:
                 pqc_send_message(

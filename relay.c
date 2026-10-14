@@ -2140,7 +2140,8 @@ int main(int argc, char *argv[]) {
         /* Decrypt with KME key */
         if (kme_dec && strlen(kme_dec) > 0 && from_key_id && strlen(from_key_id) > 0) {
             get_timestamp(ts, sizeof(ts));
-            fprintf(stderr, "[%s][%s] Getting key from KME %s...\n", ts, relay_id, kme_dec);
+            fprintf(stderr, "[%s][%s] Getting decryption key from KME %s key_ID=%s...\n",
+                    ts, relay_id, kme_dec, from_key_id);
             char *key_resp = kme_get_key_with_id(config->pqc_private_key,
                                                   config->pqc_certificate, config->kme_ca_certificate,
                                                   kme_dec_host, kme_dec_ip, kme_dec_port, kme_dec_peer, from_key_id);
@@ -2148,7 +2149,8 @@ int main(int argc, char *argv[]) {
                 char *key_val = extract_json_string(key_resp, "key");
                 if (key_val) {
                     get_timestamp(ts, sizeof(ts));
-                    fprintf(stderr, "[%s][%s] Decrypting with QKD key...\n", ts, relay_id);
+                    fprintf(stderr, "[%s][%s] Decrypting with QKD key key_ID=%s...\n",
+                            ts, relay_id, from_key_id);
                     plaintext = qkd_decrypt(from_ct, key_val);
                     free(key_val);
                 }
@@ -2167,7 +2169,7 @@ int main(int argc, char *argv[]) {
         /* Encrypt with KME key */
         if (kme_enc && strlen(kme_enc) > 0) {
             get_timestamp(ts, sizeof(ts));
-            fprintf(stderr, "[%s][%s] Getting key from KME %s...\n", ts, relay_id, kme_enc);
+            fprintf(stderr, "[%s][%s] Getting encryption key from KME %s...\n", ts, relay_id, kme_enc);
             char *key_resp = kme_get_key(config->pqc_private_key,
                                           config->pqc_certificate, config->kme_ca_certificate,
                                           kme_enc_host, kme_enc_ip, kme_enc_port, kme_enc_peer);
@@ -2176,7 +2178,8 @@ int main(int argc, char *argv[]) {
                 to_key_id = extract_json_string(key_resp, "key_ID");
                 if (key_val) {
                     get_timestamp(ts, sizeof(ts));
-                    fprintf(stderr, "[%s][%s] Encrypting with QKD key...\n", ts, relay_id);
+                    fprintf(stderr, "[%s][%s] Encrypting with QKD key key_ID=%s...\n",
+                            ts, relay_id, to_key_id ? to_key_id : "");
                     to_ct = qkd_encrypt(plaintext, key_val);
                     free(key_val);
                 }
@@ -2186,6 +2189,14 @@ int main(int argc, char *argv[]) {
 
         if (!to_ct)     to_ct     = strdup(plaintext);
         if (!to_key_id) to_key_id = strdup("");
+
+        get_timestamp(ts, sizeof(ts));
+        if (strlen(to_key_id) > 0)
+            fprintf(stderr, "[%s][%s] Forwarding ciphertext (%zu chars, key_ID=%s) to %s: %.64s...\n",
+                    ts, relay_id, strlen(to_ct), to_key_id, to_ip, to_ct);
+        else
+            fprintf(stderr, "[%s][%s] Forwarding to %s (edge hop: PQC TLS only, no QKD layer)...\n",
+                    ts, relay_id, to_ip);
 
         free(plaintext);
         free(from_ct);
@@ -2200,9 +2211,6 @@ int main(int argc, char *argv[]) {
         char to_host[128];
         int to_port;
         parse_url(to_ip, to_host, &to_port);
-
-        get_timestamp(ts, sizeof(ts));
-        fprintf(stderr, "[%s][%s] Forwarding to %s...\n", ts, relay_id, to_ip);
 
         int ret = pqc_send_message(to_host, to_port, config->pqc_private_key,
                                     config->pqc_certificate, PQC_CA_CERTIFICATE,

@@ -216,7 +216,11 @@ from the relay. Flags:
 | `--enclave-measurement HEX` | SHA3-512 of the release enclave (see "RISC-V / Keystone"). Without it no enclave relay is admitted. |
 | `--sm-measurement HEX` | Optionally also pin the Security Monitor hash. |
 | `--attestation-root-key HEX` | Ed25519 device root key. Defaults to Keystone's public **test** key, which is only meaningful under QEMU. |
+| `--attestation-evidence-dir DIR` | Keep every received attestation report and its verdict as JSON (audit trail; used by the replay test). |
 | `--insecure-dev-attestation [R0,R2]` | **Dev only.** Accept the SHA256 stand-in report (no TEE) from the listed relays, or from all relays with no value. Every use is logged as a warning. |
+
+A relay's certificate is only issued for its own attested `relay_id` (CSR CN must match), so
+an admitted relay can't obtain another relay's identity.
 
 Native (non-enclave) relays are refused unless `--insecure-dev-attestation` covers them, so
 the all-native deployments below need the flag. For R1 in an enclave with R0/R2 native, use
@@ -393,6 +397,32 @@ hands the payload to the untrusted host through stderr). Inside the enclave, Eyr
 boot, not wall time. Compare them only with each other, and use R0/R2 (host clock) for
 end-to-end hop timing. Rebuilding `relay.c` changes the enclave measurement, so re-run
 `--measure` and update `--enclave-measurement` after every change.
+
+### Demonstration harness (paper §5.4)
+
+`demo/run_demo.py` runs the whole scenario unattended against the QEMU guest (booted if not
+running) and the KME simulator (started if not running), and writes timestamped logs to
+`demo/logs/<timestamp>/`:
+
+| Log | Shows |
+|-----|-------|
+| `p3_demo.log` | APP_L → R0 → R1 (enclave) → R2 → APP_R, with a 16-item evidence checklist: nonce issued, report verified against the pinned measurement and bound to the nonce, certificates issued with CN = relay ID, the same QKD key ID fetched at both ends of each hop, ciphertext forwarded, payload recovered byte-for-byte |
+| `test1_whitelist.log` | APP_L connects straight to R1, whose whitelist is R0/R2: rejected |
+| `test2_other_ca.log` | certificate for CN=R0 from a rogue CA with the real CA's name: rejected by R1 |
+| `test3_kme_no_relay_cert.log` | KME `enc_keys` request without a certificate, and with a rogue-CA one: refused |
+| `test4_replay.log` | R1's genuine report from the demo run replayed in a new session: rejected (stale nonce) |
+| `test5_modified_enclave.log` | enclave image with one byte changed runs as R1: measurement mismatch, refused |
+| `test6_cn_mismatch.log` | dev-admitted R0 asks for a CN=R1 certificate: refused (CN=R0 control: issued) |
+| `summary.txt` | expected vs. observed for each |
+
+```bash
+python3 demo/run_demo.py                   # everything
+python3 demo/run_demo.py --only test5      # a single test
+python3 demo/run_demo.py --host-relays c   # R0/R2 as relay.c instead of relay.py
+```
+
+Each log line carries the host time at which the harness received it, which lines up the
+enclave's lines with everyone else's (R1's own clock counts from guest boot).
 
 ---
 
