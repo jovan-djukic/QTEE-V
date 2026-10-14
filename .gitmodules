@@ -4,6 +4,3 @@
 [submodule "external/keystone"]
 	path = external/keystone
 	url = https://github.com/jovan-djukic/keystone
-[submodule "external/wolfssl"]
-	path = external/wolfssl
-	url = https://github.com/wolfSSL/wolfssl
