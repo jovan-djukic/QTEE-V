@@ -292,11 +292,11 @@ python test_client_pqc.py --generate-credentials
 # (8998 is the *left* edge's fixed port, i.e. what R0 would use to reply to
 # APP_L -- not related to this receive-at-the-far-end step).
 LD_LIBRARY_PATH=external/wolfssl/_install_linux_shared/lib \
-python test_client_pqc.py --receive --port 8999
+python test_client_pqc.py --receive --port 8999 --expect-peer R2
 
 # terminal B
 LD_LIBRARY_PATH=external/wolfssl/_install_linux_shared/lib \
-python test_client_pqc.py --send --target 127.0.0.1:9000 --message "Hello from APP_L!"
+python test_client_pqc.py --send --target 127.0.0.1:9000 --expect-peer R0 --message "Hello from APP_L!"
 ```
 
 Message path: `APP_L → R0 → R1 → R2 → APP_R`. `APP_L↔R0` and `R2↔APP_R` are PQC TLS only
@@ -417,6 +417,8 @@ running) and the KME simulator (started if not running), and writes timestamped 
 | `test4_replay.log` | R1's genuine report from the demo run replayed in a new session: rejected (stale nonce) |
 | `test5_modified_enclave.log` | enclave image with one byte changed runs as R1: measurement mismatch, refused |
 | `test6_cn_mismatch.log` | dev-admitted R0 asks for a CN=R1 certificate: refused (CN=R0 control: issued; a second certificate in the same session: refused) |
+| `test7_wrong_next_hop.log` | impostor with a genuine Relay-CA certificate for CN=R0 takes APP_R's port: R2 refuses to forward, the impostor receives nothing |
+| `test8_fake_controller.log` | impostor with a genuine Relay-CA certificate for CN=R1 poses as the controller: R1 (enclave) refuses to register |
 | `summary.txt` | expected vs. observed for each |
 
 ```bash
@@ -472,47 +474,35 @@ verify (`verify_cert_der()` in `wolfssl_mldsa.py` / `x509_verify_cert()` in `rel
 
 ## Formal verification with ProVerif
 
-`protocol.pv` is a symbolic model of the controller↔relay and relay↔relay protocol in
-applied pi calculus, checked under the Dolev-Yao attacker model (the attacker controls
-the entire network). The relay↔KME leg and its two-CA split are treated as an opaque
-oracle (`qkd_k(A,B)`, `[private]`) rather than modeled in full — see the comment block at
-the top of `protocol.pv` for the reasoning.
+`protocol.pv` models controller admission and bidirectional forwarding under an
+active Dolev-Yao network attacker. The repaired model has **17 security queries**:
+two payload secrecy properties, four directional hop-key consistency checks, and
+eleven correspondences. ProVerif 2.05 proves all 17 under the documented assumptions.
+The original model is preserved in `verification/baseline/protocol_original.pv`.
 
 ```bash
 proverif protocol.pv
+python verification/run_verification.py --proverif /path/to/proverif --group all --timeout 120
 ```
 
-Ten properties are checked, all `true`:
+The reproducible suite also checks **18 reachability/rejection queries** and **two
+possession regressions**. All relays obtain certificates, both application secrets
+are delivered through the chain, and unexpected measurements are rejected. A
+public-certificate impersonation payload is rejected with the modeled possession
+check and accepted when that check is deliberately removed in a diagnostic copy.
+Full inputs, logs, tool version and hashes are in `verification/results/`.
 
-**Secrecy**
+The mTLS exchange is an explicit symbolic abstraction of peer possession and
+transcript binding, not a verification of the complete TLS 1.3 implementation.
+Private QKD key provisioning, uncompromised hardware keys and the Relay CA remain
+assumptions. The model requires exact intended controller/destination identity
+checks; the relays enforce them at runtime (controller certificate CN must be
+`QKD Relay Controller`, next hop's CN must be the configured neighbour; see harness
+tests 7 and 8), and the test client does with `--expect-peer`. These results do not prove the C/Python implementation, KME delivery,
+physical isolation or quantum resistance of the concrete algorithms.
 
-| Query | Meaning |
-|-------|---------|
-| `attacker(secret_msg)` | The relayed plaintext never reaches the attacker |
-| `attacker(qkd_k(R0, R1))` | The QKD key between R0 and R1 stays secret |
-| `attacker(qkd_k(R1, R2))` | The QKD key between R1 and R2 stays secret |
-
-**Authentication / correspondence**
-
-| # | Meaning |
-|---|---------|
-| Q1 | No certificate is issued without prior attestation (`CtrlIssuedCert ⟹ CtrlGotAttest`) |
-| Q2 | Attestation only accepted after registration (`CtrlGotAttest ⟹ CtrlGotRegister`) |
-| Q3 | One attestation yields at most one cert — replay protection (`inj-event`) |
-| Q4 | HW attestation soundness — the controller accepted a report only if that relay's hardware actually signed it, same session (`inj-event`, nonce-bound) |
-| Q5 | Hop integrity — no message fabrication in transit (`RelayGotHop ⟹ RelaySentHop`) |
-| Q6 | A relay only accepts hops from a configured neighbor |
-| Q7 | A relay only forwards to a configured neighbor |
-
-`is true` means the property holds for all possible attacker strategies and for
-arbitrarily many concurrent sessions (the relay loop is `!`-replicated). `is false` would
-mean ProVerif found a concrete attack trace.
-
-The Dolev-Yao attacker can read, replay, modify, and inject any message on the network.
-It cannot: extract `ca_sk` (never sent), extract `hw_sk(rid)` or `meas(rid)` (`[private]`,
-models the hardware security boundary), extract `qkd_k(A,B)` (`[private]`, models the
-quantum channel), decrypt without the matching private key, or forge a signature without
-the signing key.
+See [verification/README.md](verification/README.md) for the query inventory,
+assumptions, implementation mapping and reproduction instructions.
 
 ---
 

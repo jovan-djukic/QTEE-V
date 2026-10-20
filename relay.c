@@ -1205,6 +1205,13 @@ char *get_attestation_report(const char *nonce, const char *relay_id) {
 }
 #endif
 
+/* CN of the controller's TLS certificate (controller.py generate_controller_cert).
+ * The CA check alone accepts any Relay-CA certificate -- every relay's and
+ * app's too -- so the controller's identity is checked as well. */
+#define CONTROLLER_CN "QKD Relay Controller"
+
+static void tls_get_peer_cn(WOLFSSL *ssl, char *cn, int cn_max);
+
 /* ==================== Controller TLS Context ==================== */
 
 /*
@@ -1293,7 +1300,17 @@ int get_configuration(const char *controller_host, int controller_port,
         goto fail_tls;
     }
     free(ca_der_raw);
-    fprintf(stderr, "[DEBUG] WolfSSL TLS connected to controller, server cert verified\n");
+    {
+        char ctrl_cn[MAX_CN_SIZE];
+        tls_get_peer_cn(ssl, ctrl_cn, MAX_CN_SIZE);
+        if (strcmp(ctrl_cn, CONTROLLER_CN) != 0) {
+            fprintf(stderr, "[ERROR] Controller identity mismatch: certificate CN is '%s', expected '%s'\n",
+                    ctrl_cn, CONTROLLER_CN);
+            goto fail_tls;
+        }
+    }
+    fprintf(stderr, "[DEBUG] WolfSSL TLS connected to controller, server cert verified (CN=%s)\n",
+            CONTROLLER_CN);
 
     /* ── Step 1: Register — get nonce ────────────────────────────────────── */
     {
@@ -1797,11 +1814,14 @@ static void tls_get_peer_cn(WOLFSSL *ssl, char *cn, int cn_max) {
 
 /*
  * Send a JSON message to a remote relay using WolfSSL mTLS.
- * Acts as TLS client.
+ * Acts as TLS client. The peer must present a Relay-CA certificate whose CN
+ * is expected_cn (the configured neighbour in the forwarding direction);
+ * otherwise nothing is sent.
  */
 int pqc_send_message(const char *host, int port,
                      const unsigned char *my_sk, const char *my_cert,
-                     const char *ca_cert, const char *msg_json, const char *relay_id) {
+                     const char *ca_cert, const char *msg_json, const char *relay_id,
+                     const char *expected_cn) {
     char ts[32];
     get_timestamp(ts, sizeof(ts));
 
@@ -1870,6 +1890,13 @@ int pqc_send_message(const char *host, int port,
     /* Identify peer */
     char peer_cn[MAX_CN_SIZE];
     tls_get_peer_cn(ssl, peer_cn, MAX_CN_SIZE);
+    if (!expected_cn || strcmp(peer_cn, expected_cn) != 0) {
+        fprintf(stderr, "[ERROR][%s] pqc_send_message: peer identity mismatch at %s:%d: "
+                "certificate CN is '%s', expected '%s'\n",
+                relay_id, host, port, peer_cn, expected_cn ? expected_cn : "(none)");
+        wolfSSL_shutdown(ssl); wolfSSL_free(ssl); close(sock); wolfSSL_CTX_free(ctx);
+        return -1;
+    }
     get_timestamp(ts, sizeof(ts));
     fprintf(stderr, "[%s][%s] PQC TLS connected to %s\n", ts, relay_id, peer_cn);
 
@@ -2212,9 +2239,10 @@ int main(int argc, char *argv[]) {
         int to_port;
         parse_url(to_ip, to_host, &to_port);
 
+        const char *to_id = is_from_left ? config->right_relay_id : config->left_relay_id;
         int ret = pqc_send_message(to_host, to_port, config->pqc_private_key,
                                     config->pqc_certificate, PQC_CA_CERTIFICATE,
-                                    to_msg, relay_id);
+                                    to_msg, relay_id, to_id);
 
         get_timestamp(ts, sizeof(ts));
         fprintf(stderr, "[%s][%s] %s\n", ts, relay_id,

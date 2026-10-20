@@ -1,0 +1,225 @@
+Process 0 (that is, the initial process):
+{1}new ca_sk: skey;
+{2}let ca_pkb: bitstring = pkb(pk(ca_sk)) in
+{3}new relay_sk: skey;
+{4}new app_sk: skey;
+{5}let relay_cert: bitstring = cert_make(R0,pkb(pk(relay_sk)),ca_sk) in
+{6}let app_cert: bitstring = cert_make(APP_L,pkb(pk(app_sk)),ca_sk) in
+{7}out(net, ca_pkb);
+{8}out(net, relay_cert);
+{9}out(net, app_cert);
+{10}event RelayLoadedCfg(R0,tag_nonce,APP_L,R1);
+(
+    {11}let rid: bitstring = R0 in
+    {12}let left_id: bitstring = APP_L in
+    {13}let right_id: bitstring = R1 in
+    {14}let relay_sk_1: skey = relay_sk in
+    {15}in(net, (peer_cert: bitstring,ek: bitstring));
+    {16}if (cert_ok(peer_cert,ca_pkb) = ok) then
+    {17}let peer_id: bitstring = cert_getid(peer_cert) in
+    {18}if ((peer_id = left_id) || (peer_id = right_id)) then
+    {19}let pkb(peer_pk: pkey) = cert_getpk(peer_cert) in
+    {20}let k_in: bitstring = adec(ek,relay_sk_1) in
+    {21}new challenge: bitstring;
+    {22}out(net, senc((tag_hop_challenge,peer_id,rid,challenge),k_in));
+    {23}in(net, proof_rx: bitstring);
+    {24}let transcript: bitstring = (tag_hop_proof,peer_id,rid,ek,challenge) in
+    {25}event HopPeerAuthenticated(peer_id,rid,ek,challenge);
+    {26}in(net, record: bitstring);
+    {27}let (=tag_hop_data,payload: bitstring,=peer_id,=rid) = sdec(record,k_in) in
+    {28}let plain: bitstring = (if ((peer_id = APP_L) || (peer_id = APP_R)) then payload else qkd_dec(payload,qkd_k(peer_id,rid))) in
+    {29}event RelayGotHop(plain,peer_id,rid);
+    {30}let destination: bitstring = (if (peer_id = left_id) then right_id else left_id) in
+    {31}in(net, fwd_cert: bitstring);
+    {32}if (cert_ok(fwd_cert,ca_pkb) = ok) then
+    {33}if (cert_getid(fwd_cert) = destination) then
+    {34}let pkb(fwd_pk: pkey) = cert_getpk(fwd_cert) in
+    {35}new k_out: bitstring;
+    {36}let ek_1: bitstring = aenc(k_out,fwd_pk) in
+    {37}out(net, (relay_cert,ek_1));
+    {38}in(net, challenge_m: bitstring);
+    {39}let (=tag_hop_challenge,=rid,=destination,challenge_1: bitstring) = sdec(challenge_m,k_out) in
+    {40}let transcript_1: bitstring = (tag_hop_proof,rid,destination,ek_1,challenge_1) in
+    {41}event HopSignedTranscript(rid,destination,ek_1,challenge_1);
+    {42}out(net, sign(transcript_1,relay_sk_1));
+    {43}let payload_1: bitstring = (if ((destination = APP_L) || (destination = APP_R)) then plain else qkd_enc(plain,qkd_k(rid,destination))) in
+    {44}event HopSent(plain,rid,destination);
+    {45}event RelaySentHop(plain,rid,destination);
+    {46}out(net, senc((tag_hop_data,payload_1,rid,destination),k_out))
+) | (
+    {47}let pkb(server_pk: pkey) = cert_getpk(relay_cert) in
+    {48}let wrapped: bitstring = aenc(tag_authed,server_pk) in
+    {49}out(net, (app_cert,wrapped));
+    {50}in(net, challenge_m_1: bitstring);
+    {51}let (=tag_hop_challenge,=APP_L,=R0,challenge_2: bitstring) = sdec(challenge_m_1,tag_authed) in
+    {52}new attacker_sk: skey;
+    {53}out(net, sign((tag_hop_proof,APP_L,R0,wrapped,challenge_2),attacker_sk));
+    {54}out(net, senc((tag_hop_data,tag_reg,APP_L,R0),tag_authed))
+)
+
+--  Process 1 (that is, process 0, with let moved downwards):
+{1}new ca_sk: skey;
+{3}new relay_sk: skey;
+{4}new app_sk: skey;
+{2}let ca_pkb: bitstring = pkb(pk(ca_sk)) in
+{7}out(net, ca_pkb);
+{5}let relay_cert: bitstring = cert_make(R0,pkb(pk(relay_sk)),ca_sk) in
+{8}out(net, relay_cert);
+{6}let app_cert: bitstring = cert_make(APP_L,pkb(pk(app_sk)),ca_sk) in
+{9}out(net, app_cert);
+{10}event RelayLoadedCfg(R0,tag_nonce,APP_L,R1);
+(
+    {15}in(net, (peer_cert: bitstring,ek: bitstring));
+    {16}if (cert_ok(peer_cert,ca_pkb) = ok) then
+    {17}let peer_id: bitstring = cert_getid(peer_cert) in
+    {13}let right_id: bitstring = R1 in
+    {12}let left_id: bitstring = APP_L in
+    {18}if ((peer_id = left_id) || (peer_id = right_id)) then
+    {19}let pkb(peer_pk: pkey) = cert_getpk(peer_cert) in
+    {14}let relay_sk_1: skey = relay_sk in
+    {20}let k_in: bitstring = adec(ek,relay_sk_1) in
+    {21}new challenge: bitstring;
+    {11}let rid: bitstring = R0 in
+    {22}out(net, senc((tag_hop_challenge,peer_id,rid,challenge),k_in));
+    {23}in(net, proof_rx: bitstring);
+    {25}event HopPeerAuthenticated(peer_id,rid,ek,challenge);
+    {26}in(net, record: bitstring);
+    {27}let (=tag_hop_data,payload: bitstring,=peer_id,=rid) = sdec(record,k_in) in
+    {28}let plain: bitstring = (if ((peer_id = APP_L) || (peer_id = APP_R)) then payload else qkd_dec(payload,qkd_k(peer_id,rid))) in
+    {29}event RelayGotHop(plain,peer_id,rid);
+    {31}in(net, fwd_cert: bitstring);
+    {32}if (cert_ok(fwd_cert,ca_pkb) = ok) then
+    {30}let destination: bitstring = (if (peer_id = left_id) then right_id else left_id) in
+    {33}if (cert_getid(fwd_cert) = destination) then
+    {34}let pkb(fwd_pk: pkey) = cert_getpk(fwd_cert) in
+    {35}new k_out: bitstring;
+    {36}let ek_1: bitstring = aenc(k_out,fwd_pk) in
+    {37}out(net, (relay_cert,ek_1));
+    {38}in(net, challenge_m: bitstring);
+    {39}let (=tag_hop_challenge,=rid,=destination,challenge_1: bitstring) = sdec(challenge_m,k_out) in
+    {41}event HopSignedTranscript(rid,destination,ek_1,challenge_1);
+    {40}let transcript_1: bitstring = (tag_hop_proof,rid,destination,ek_1,challenge_1) in
+    {42}out(net, sign(transcript_1,relay_sk_1));
+    {44}event HopSent(plain,rid,destination);
+    {45}event RelaySentHop(plain,rid,destination);
+    {43}let payload_1: bitstring = (if ((destination = APP_L) || (destination = APP_R)) then plain else qkd_enc(plain,qkd_k(rid,destination))) in
+    {46}out(net, senc((tag_hop_data,payload_1,rid,destination),k_out))
+) | (
+    {47}let pkb(server_pk: pkey) = cert_getpk(relay_cert) in
+    {48}let wrapped: bitstring = aenc(tag_authed,server_pk) in
+    {49}out(net, (app_cert,wrapped));
+    {50}in(net, challenge_m_1: bitstring);
+    {51}let (=tag_hop_challenge,=APP_L,=R0,challenge_2: bitstring) = sdec(challenge_m_1,tag_authed) in
+    {52}new attacker_sk: skey;
+    {53}out(net, sign((tag_hop_proof,APP_L,R0,wrapped,challenge_2),attacker_sk));
+    {54}out(net, senc((tag_hop_data,tag_reg,APP_L,R0),tag_authed))
+)
+
+-- Query not event(RelayGotHop(tag_reg[],APP_L,R0)) in process 1.
+Translating the process into Horn clauses...
+Completing...
+Starting query not event(RelayGotHop(tag_reg[],APP_L,R0))
+goal reachable: event(RelayGotHop(tag_reg[],APP_L,R0))
+
+Derivation:
+
+1. The message (cert_make(APP_L,pkb(pk(app_sk[])),ca_sk[]),aenc(tag_authed[],pk(relay_sk[]))) may be sent to the attacker at output {49}.
+attacker((cert_make(APP_L,pkb(pk(app_sk[])),ca_sk[]),aenc(tag_authed[],pk(relay_sk[])))).
+
+2. By 1, the attacker may know (cert_make(APP_L,pkb(pk(app_sk[])),ca_sk[]),aenc(tag_authed[],pk(relay_sk[]))).
+Using the function 2-proj-2-tuple the attacker may obtain aenc(tag_authed[],pk(relay_sk[])).
+attacker(aenc(tag_authed[],pk(relay_sk[]))).
+
+3. The message cert_make(APP_L,pkb(pk(app_sk[])),ca_sk[]) may be sent to the attacker at output {9}.
+attacker(cert_make(APP_L,pkb(pk(app_sk[])),ca_sk[])).
+
+4. By 3, the attacker may know cert_make(APP_L,pkb(pk(app_sk[])),ca_sk[]).
+By 2, the attacker may know aenc(tag_authed[],pk(relay_sk[])).
+Using the function 2-tuple the attacker may obtain (cert_make(APP_L,pkb(pk(app_sk[])),ca_sk[]),aenc(tag_authed[],pk(relay_sk[]))).
+attacker((cert_make(APP_L,pkb(pk(app_sk[])),ca_sk[]),aenc(tag_authed[],pk(relay_sk[])))).
+
+5. The attacker has some term proof_rx_1.
+attacker(proof_rx_1).
+
+6. The attacker initially knows tag_authed[].
+attacker(tag_authed[]).
+
+7. Using the function R0 the attacker may obtain R0.
+attacker(R0).
+
+8. Using the function APP_L the attacker may obtain APP_L.
+attacker(APP_L).
+
+9. The attacker initially knows tag_reg[].
+attacker(tag_reg[]).
+
+10. The attacker initially knows tag_hop_data[].
+attacker(tag_hop_data[]).
+
+11. By 10, the attacker may know tag_hop_data[].
+By 9, the attacker may know tag_reg[].
+By 8, the attacker may know APP_L.
+By 7, the attacker may know R0.
+Using the function 4-tuple the attacker may obtain (tag_hop_data[],tag_reg[],APP_L,R0).
+attacker((tag_hop_data[],tag_reg[],APP_L,R0)).
+
+12. By 11, the attacker may know (tag_hop_data[],tag_reg[],APP_L,R0).
+By 6, the attacker may know tag_authed[].
+Using the function senc the attacker may obtain senc((tag_hop_data[],tag_reg[],APP_L,R0),tag_authed[]).
+attacker(senc((tag_hop_data[],tag_reg[],APP_L,R0),tag_authed[])).
+
+13. The message (cert_make(APP_L,pkb(pk(app_sk[])),ca_sk[]),aenc(tag_authed[],pk(relay_sk[]))) that the attacker may have by 4 may be received at input {15}.
+The message proof_rx_1 that the attacker may have by 5 may be received at input {23}.
+The message senc((tag_hop_data[],tag_reg[],APP_L,R0),tag_authed[]) that the attacker may have by 12 may be received at input {26}.
+So event RelayGotHop(tag_reg[],APP_L,R0) may be executed at {29}.
+event(RelayGotHop(tag_reg[],APP_L,R0)).
+
+14. By 13, event(RelayGotHop(tag_reg[],APP_L,R0)).
+The goal is reached, represented in the following fact:
+event(RelayGotHop(tag_reg[],APP_L,R0)).
+
+
+A more detailed output of the traces is available with
+  set traceDisplay = long.
+
+new ca_sk: skey creating ca_sk_1 at {1}
+
+new relay_sk: skey creating relay_sk_2 at {3}
+
+new app_sk: skey creating app_sk_1 at {4}
+
+out(net, pkb(~M)) with ~M = pk(ca_sk_1) at {7}
+
+out(net, ~M_1) with ~M_1 = cert_make(R0,pkb(pk(relay_sk_2)),ca_sk_1) at {8}
+
+out(net, ~M_2) with ~M_2 = cert_make(APP_L,pkb(pk(app_sk_1)),ca_sk_1) at {9}
+
+event RelayLoadedCfg(R0,tag_nonce,APP_L,R1) at {10}
+
+out(net, (~M_3,~M_4)) with ~M_3 = cert_make(APP_L,pkb(pk(app_sk_1)),ca_sk_1), ~M_4 = aenc(tag_authed,pk(relay_sk_2)) at {49}
+
+in(net, (~M_2,~M_4)) with ~M_2 = cert_make(APP_L,pkb(pk(app_sk_1)),ca_sk_1), ~M_4 = aenc(tag_authed,pk(relay_sk_2)) at {15}
+
+new challenge: bitstring creating challenge_3 at {21}
+
+out(net, ~M_5) with ~M_5 = senc((tag_hop_challenge,APP_L,R0,challenge_3),tag_authed) at {22}
+
+in(net, a) at {23}
+
+event HopPeerAuthenticated(APP_L,R0,aenc(tag_authed,pk(relay_sk_2)),challenge_3) at {25}
+
+in(net, senc((tag_hop_data,tag_reg,APP_L,R0),tag_authed)) at {26}
+
+event RelayGotHop(tag_reg,APP_L,R0) at {29} (goal)
+
+The event RelayGotHop(tag_reg,APP_L,R0) is executed at {29}.
+A trace has been found.
+RESULT not event(RelayGotHop(tag_reg[],APP_L,R0)) is false.
+
+--------------------------------------------------------------
+Verification summary:
+
+Query not event(RelayGotHop(tag_reg[],APP_L,R0)) is false.
+
+--------------------------------------------------------------
+

@@ -14,6 +14,8 @@ Runs, unattended, against the Keystone QEMU guest:
   test4  attestation report replayed from an earlier session -> rejected
   test5  modified enclave image            -> measurement mismatch -> refused
   test6  admitted relay asks for a certificate with another relay's CN -> refused
+  test7  impostor with a valid Relay-CA cert takes APP_R's place -> R2 won't forward
+  test8  impostor with a valid Relay-CA cert poses as the controller -> R1 won't register
 
 Every line in the logs is stamped with the host clock when the harness
 received it ("host time") and tagged with its source; the relays' own
@@ -356,11 +358,12 @@ def run_demo(out, meas, host_kind, payload, keep_running=False):
     ok_ready = all(p.wait_for(ready, 900) for p in (r0, r2, r1))
     app_r = app_l = None
     if ok_ready:
-        app_r = Proc(log, "APP_R", ["python3", "test_client_pqc.py", "--receive", "--port", "8999"])
+        app_r = Proc(log, "APP_R", ["python3", "test_client_pqc.py", "--receive", "--port", "8999",
+                                    "--expect-peer", "R2"])
         procs.append(app_r)
         app_r.wait_for(r"Waiting for connection", 30)
         app_l = Proc(log, "APP_L", ["python3", "test_client_pqc.py", "--send", "--target", "127.0.0.1:9000",
-                                    "--message", payload])
+                                    "--expect-peer", "R0", "--message", payload])
         procs.append(app_l)
         app_r.wait_for(r"Content: ", 600)
         time.sleep(1)
@@ -646,6 +649,115 @@ R1. Control: the same connection then asks for CN=R0, and then for CN=R0 again
     log.close()
 
 
+def real_ca_cert(cn: str):
+    """A genuine Relay-CA certificate for `cn`: what any holder of a relay or
+    app credential has, just under a different identity."""
+    ca_sk = pem_der("pqc_ca/ca_private_key.pem")
+    return make_cert(cn, ca_sk, real_ca_cn())
+
+
+class Impostor(threading.Thread):
+    """TLS server on `port` presenting a genuine Relay-CA cert for the wrong CN.
+    Records whether any application data reached it."""
+
+    def __init__(self, log: Log, port: int, cn: str, mutual: bool):
+        super().__init__(daemon=True)
+        self.log, self.port, self.cn, self.mutual = log, port, cn, mutual
+        self.received = []
+        self.ready = threading.Event()
+        self.srv = socket.socket()
+        self.srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.srv.bind(("0.0.0.0", port))
+        self.srv.listen(5)
+        self.srv.settimeout(1)
+        self.stop_flag = False
+
+    def run(self):
+        cert, sk, _ = real_ca_cert(self.cn)
+        pkcs8 = wolfssl_mldsa.pkcs8_mldsa65_der(sk)
+        ca = pem_der("pqc_ca/ca_certificate.pem")
+        self.ready.set()
+        while not self.stop_flag:
+            try:
+                conn, addr = self.srv.accept()
+            except socket.timeout:
+                continue
+            conn.settimeout(None)
+            self.log.emit("impostor", f"connection from {addr}, presenting genuine Relay-CA cert CN={self.cn}")
+            try:
+                if self.mutual:
+                    ctx = wolfssl_mldsa.pqc_tls_server_accept(conn.fileno(), cert, pkcs8, ca)
+                else:
+                    ctx = wolfssl_mldsa.pqc_tls_server_accept_anon_client(conn.fileno(), cert, pkcs8)
+                with ctx as tls:
+                    data = tls.recvmsg()
+                    self.received.append(data)
+                    self.log.emit("impostor", f"RECEIVED application data: {data[:120]!r}")
+            except Exception as e:
+                self.log.emit("impostor", f"peer gave up before sending data ({type(e).__name__}: {e})")
+            finally:
+                conn.close()
+
+    def stop(self):
+        self.stop_flag = True
+        self.join(timeout=5)
+        self.srv.close()
+
+
+def test7_wrong_next_hop(out, live):
+    expected = "R2 refuses to forward (peer identity mismatch); the impostor receives nothing"
+    log = test_log(out, "test7_wrong_next_hop", "impostor with a valid certificate in APP_R's place -> not forwarded", """
+After the demo, APP_R's port (8999) is taken by an impostor that holds a GENUINE
+Relay-CA certificate, but for CN=R0 rather than APP_R's test_client. The last hop
+R2 -> APP_R is PQC TLS only (no QKD layer), so a relay that only checked the CA
+would hand it the plaintext. APP_L sends a new message through the chain.""", expected)
+    background = live["r1"].log
+    route(live["procs"], log)
+    r2 = live["r2"]
+    mark = len(r2.lines)
+    imp = Impostor(log, 8999, "R0", mutual=True)
+    imp.start()
+    imp.ready.wait(30)
+    secret = "test7: for APP_R only"
+    app_l = Proc(log, "APP_L", ["python3", "test_client_pqc.py", "--send", "--target", "127.0.0.1:9000",
+                                "--expect-peer", "R0", "--message", secret])
+    app_l.p.wait(timeout=120)
+    refused = None
+    end = time.time() + 120
+    while time.time() < end and not refused:
+        refused = next((l for l in r2.lines[mark:] if "identity mismatch" in l), None)
+        time.sleep(0.5)
+    time.sleep(2)
+    imp.stop()
+    route(live["procs"], background)
+    leaked = any(secret.encode() in d for d in imp.received)
+    verdict(log, "test7: wrong identity at the next hop", expected,
+            f"R2: {refused.strip() if refused else 'no refusal logged'}; "
+            f"impostor received data: {bool(imp.received)}", bool(refused) and not leaked and not imp.received)
+    log.close()
+
+
+def test8_fake_controller(out):
+    expected = "R1 refuses the controller (identity mismatch) and sends no registration"
+    log = test_log(out, "test8_fake_controller", "impostor with a valid certificate poses as the controller -> refused", """
+No real controller runs. Port 8001 is taken by an impostor holding a GENUINE
+Relay-CA certificate for CN=R1 (as any relay's credential would be), not the
+controller's 'QKD Relay Controller'. A relay that only checked the CA would
+register with it and could be fed a false topology. R1 starts in the enclave.""", expected)
+    imp = Impostor(log, 8001, "R1", mutual=False)
+    imp.start()
+    imp.ready.wait(30)
+    r1 = start_enclave_relay(log)
+    refused = r1.wait_for(r"Controller identity mismatch.*", 600)
+    time.sleep(3)
+    stop_all([r1])
+    imp.stop()
+    verdict(log, "test8: fake controller with a valid certificate", expected,
+            f"R1: {refused.group(0) if refused else 'no refusal logged'}; "
+            f"impostor received data: {bool(imp.received)}", bool(refused) and not imp.received)
+    log.close()
+
+
 # ==================== Main ====================
 
 def main():
@@ -653,11 +765,12 @@ def main():
     ap.add_argument("--out", default=os.path.join(REPO, "demo", "logs", datetime.now().strftime("%Y%m%d-%H%M%S")))
     ap.add_argument("--host-relays", choices=("py", "c"), default="py")
     ap.add_argument("--payload", default=DEFAULT_PAYLOAD)
-    ap.add_argument("--only", nargs="+", choices=("demo", "test1", "test2", "test3", "test4", "test5", "test6"))
+    tests = ("demo", "test1", "test2", "test3", "test4", "test5", "test6", "test7", "test8")
+    ap.add_argument("--only", nargs="+", choices=tests)
     args = ap.parse_args()
-    want = set(args.only or ("demo", "test1", "test2", "test3", "test4", "test5", "test6"))
-    if want & {"test1", "test2", "test3", "test4"}:
-        want.add("demo")   # tests 1-3 run against the live demo chain; test 4 replays its report
+    want = set(args.only or tests)
+    if want & {"test1", "test2", "test3", "test4", "test7"}:
+        want.add("demo")   # tests 1-3, 7 run against the live demo chain; test 4 replays its report
 
     os.makedirs(args.out, exist_ok=True)
     print(f"[*] Logs: {args.out}")
@@ -669,7 +782,7 @@ def main():
         meas = guest_prepare()
         print(f"[*] Release enclave measurement: {meas}")
 
-        live_tests = [t for t in ("test1", "test2", "test3") if t in want]
+        live_tests = [t for t in ("test1", "test2", "test3", "test7") if t in want]
         log = procs = live = None
         if "demo" in want:
             log, procs, live = run_demo(args.out, meas, args.host_relays, args.payload,
@@ -679,6 +792,7 @@ def main():
                 if "test1" in want: test1_whitelist(args.out, live)
                 if "test2" in want: test2_other_ca(args.out, live)
                 if "test3" in want: test3_kme(args.out, live)
+                if "test7" in want: test7_wrong_next_hop(args.out, live)
             finally:
                 stop_all(procs)
                 procs[0].log.close()
@@ -686,6 +800,7 @@ def main():
         if "test4" in want: test4_replay(args.out, meas)
         if "test5" in want: test5_modified_image(args.out, meas)
         if "test6" in want: test6_cn(args.out, meas)
+        if "test8" in want: test8_fake_controller(args.out)
     finally:
         guest_kill_relay()
         qemu.stop_if_started()

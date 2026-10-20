@@ -1,0 +1,133 @@
+Process 0 (that is, the initial process):
+{1}new ca_sk: skey;
+{2}let ca_pkb: bitstring = pkb(pk(ca_sk)) in
+{3}new relay_sk: skey;
+{4}new app_sk: skey;
+{5}let relay_cert: bitstring = cert_make(R0,pkb(pk(relay_sk)),ca_sk) in
+{6}let app_cert: bitstring = cert_make(APP_L,pkb(pk(app_sk)),ca_sk) in
+{7}out(net, ca_pkb);
+{8}out(net, relay_cert);
+{9}out(net, app_cert);
+{10}event RelayLoadedCfg(R0,tag_nonce,APP_L,R1);
+(
+    {11}let rid: bitstring = R0 in
+    {12}let left_id: bitstring = APP_L in
+    {13}let right_id: bitstring = R1 in
+    {14}let relay_sk_1: skey = relay_sk in
+    {15}in(net, (peer_cert: bitstring,ek: bitstring));
+    {16}if (cert_ok(peer_cert,ca_pkb) = ok) then
+    {17}let peer_id: bitstring = cert_getid(peer_cert) in
+    {18}if ((peer_id = left_id) || (peer_id = right_id)) then
+    {19}let pkb(peer_pk: pkey) = cert_getpk(peer_cert) in
+    {20}let k_in: bitstring = adec(ek,relay_sk_1) in
+    {21}new challenge: bitstring;
+    {22}out(net, senc((tag_hop_challenge,peer_id,rid,challenge),k_in));
+    {23}in(net, proof_rx: bitstring);
+    {24}let transcript: bitstring = (tag_hop_proof,peer_id,rid,ek,challenge) in
+    {25}if (verify(proof_rx,transcript,peer_pk) = ok) then
+    {26}event HopPeerAuthenticated(peer_id,rid,ek,challenge);
+    {27}in(net, record: bitstring);
+    {28}let (=tag_hop_data,payload: bitstring,=peer_id,=rid) = sdec(record,k_in) in
+    {29}let plain: bitstring = (if ((peer_id = APP_L) || (peer_id = APP_R)) then payload else qkd_dec(payload,qkd_k(peer_id,rid))) in
+    {30}event RelayGotHop(plain,peer_id,rid);
+    {31}let destination: bitstring = (if (peer_id = left_id) then right_id else left_id) in
+    {32}in(net, fwd_cert: bitstring);
+    {33}if (cert_ok(fwd_cert,ca_pkb) = ok) then
+    {34}if (cert_getid(fwd_cert) = destination) then
+    {35}let pkb(fwd_pk: pkey) = cert_getpk(fwd_cert) in
+    {36}new k_out: bitstring;
+    {37}let ek_1: bitstring = aenc(k_out,fwd_pk) in
+    {38}out(net, (relay_cert,ek_1));
+    {39}in(net, challenge_m: bitstring);
+    {40}let (=tag_hop_challenge,=rid,=destination,challenge_1: bitstring) = sdec(challenge_m,k_out) in
+    {41}let transcript_1: bitstring = (tag_hop_proof,rid,destination,ek_1,challenge_1) in
+    {42}event HopSignedTranscript(rid,destination,ek_1,challenge_1);
+    {43}out(net, sign(transcript_1,relay_sk_1));
+    {44}let payload_1: bitstring = (if ((destination = APP_L) || (destination = APP_R)) then plain else qkd_enc(plain,qkd_k(rid,destination))) in
+    {45}event HopSent(plain,rid,destination);
+    {46}event RelaySentHop(plain,rid,destination);
+    {47}out(net, senc((tag_hop_data,payload_1,rid,destination),k_out))
+) | (
+    {48}let pkb(server_pk: pkey) = cert_getpk(relay_cert) in
+    {49}let wrapped: bitstring = aenc(tag_authed,server_pk) in
+    {50}out(net, (app_cert,wrapped));
+    {51}in(net, challenge_m_1: bitstring);
+    {52}let (=tag_hop_challenge,=APP_L,=R0,challenge_2: bitstring) = sdec(challenge_m_1,tag_authed) in
+    {53}new attacker_sk: skey;
+    {54}out(net, sign((tag_hop_proof,APP_L,R0,wrapped,challenge_2),attacker_sk));
+    {55}out(net, senc((tag_hop_data,tag_reg,APP_L,R0),tag_authed))
+)
+
+--  Process 1 (that is, process 0, with let moved downwards):
+{1}new ca_sk: skey;
+{3}new relay_sk: skey;
+{4}new app_sk: skey;
+{2}let ca_pkb: bitstring = pkb(pk(ca_sk)) in
+{7}out(net, ca_pkb);
+{5}let relay_cert: bitstring = cert_make(R0,pkb(pk(relay_sk)),ca_sk) in
+{8}out(net, relay_cert);
+{6}let app_cert: bitstring = cert_make(APP_L,pkb(pk(app_sk)),ca_sk) in
+{9}out(net, app_cert);
+{10}event RelayLoadedCfg(R0,tag_nonce,APP_L,R1);
+(
+    {15}in(net, (peer_cert: bitstring,ek: bitstring));
+    {16}if (cert_ok(peer_cert,ca_pkb) = ok) then
+    {17}let peer_id: bitstring = cert_getid(peer_cert) in
+    {13}let right_id: bitstring = R1 in
+    {12}let left_id: bitstring = APP_L in
+    {18}if ((peer_id = left_id) || (peer_id = right_id)) then
+    {19}let pkb(peer_pk: pkey) = cert_getpk(peer_cert) in
+    {14}let relay_sk_1: skey = relay_sk in
+    {20}let k_in: bitstring = adec(ek,relay_sk_1) in
+    {21}new challenge: bitstring;
+    {11}let rid: bitstring = R0 in
+    {22}out(net, senc((tag_hop_challenge,peer_id,rid,challenge),k_in));
+    {23}in(net, proof_rx: bitstring);
+    {24}let transcript: bitstring = (tag_hop_proof,peer_id,rid,ek,challenge) in
+    {25}if (verify(proof_rx,transcript,peer_pk) = ok) then
+    {26}event HopPeerAuthenticated(peer_id,rid,ek,challenge);
+    {27}in(net, record: bitstring);
+    {28}let (=tag_hop_data,payload: bitstring,=peer_id,=rid) = sdec(record,k_in) in
+    {29}let plain: bitstring = (if ((peer_id = APP_L) || (peer_id = APP_R)) then payload else qkd_dec(payload,qkd_k(peer_id,rid))) in
+    {30}event RelayGotHop(plain,peer_id,rid);
+    {32}in(net, fwd_cert: bitstring);
+    {33}if (cert_ok(fwd_cert,ca_pkb) = ok) then
+    {31}let destination: bitstring = (if (peer_id = left_id) then right_id else left_id) in
+    {34}if (cert_getid(fwd_cert) = destination) then
+    {35}let pkb(fwd_pk: pkey) = cert_getpk(fwd_cert) in
+    {36}new k_out: bitstring;
+    {37}let ek_1: bitstring = aenc(k_out,fwd_pk) in
+    {38}out(net, (relay_cert,ek_1));
+    {39}in(net, challenge_m: bitstring);
+    {40}let (=tag_hop_challenge,=rid,=destination,challenge_1: bitstring) = sdec(challenge_m,k_out) in
+    {42}event HopSignedTranscript(rid,destination,ek_1,challenge_1);
+    {41}let transcript_1: bitstring = (tag_hop_proof,rid,destination,ek_1,challenge_1) in
+    {43}out(net, sign(transcript_1,relay_sk_1));
+    {45}event HopSent(plain,rid,destination);
+    {46}event RelaySentHop(plain,rid,destination);
+    {44}let payload_1: bitstring = (if ((destination = APP_L) || (destination = APP_R)) then plain else qkd_enc(plain,qkd_k(rid,destination))) in
+    {47}out(net, senc((tag_hop_data,payload_1,rid,destination),k_out))
+) | (
+    {48}let pkb(server_pk: pkey) = cert_getpk(relay_cert) in
+    {49}let wrapped: bitstring = aenc(tag_authed,server_pk) in
+    {50}out(net, (app_cert,wrapped));
+    {51}in(net, challenge_m_1: bitstring);
+    {52}let (=tag_hop_challenge,=APP_L,=R0,challenge_2: bitstring) = sdec(challenge_m_1,tag_authed) in
+    {53}new attacker_sk: skey;
+    {54}out(net, sign((tag_hop_proof,APP_L,R0,wrapped,challenge_2),attacker_sk));
+    {55}out(net, senc((tag_hop_data,tag_reg,APP_L,R0),tag_authed))
+)
+
+-- Query not event(RelayGotHop(tag_reg[],APP_L,R0)) in process 1.
+Translating the process into Horn clauses...
+Completing...
+Starting query not event(RelayGotHop(tag_reg[],APP_L,R0))
+RESULT not event(RelayGotHop(tag_reg[],APP_L,R0)) is true.
+
+--------------------------------------------------------------
+Verification summary:
+
+Query not event(RelayGotHop(tag_reg[],APP_L,R0)) is true.
+
+--------------------------------------------------------------
+

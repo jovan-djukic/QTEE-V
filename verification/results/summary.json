@@ -1,0 +1,433 @@
+{
+  "tool": "Proverif 2.05. Cryptographic protocol verifier, by Bruno Blanchet, Vincent Cheval, and Marc Sylvestre",
+  "model": "protocol.pv",
+  "model_sha256": "ee12ca7e2f0114ed1a7bff4b6be730e91ab287ba10a95a3750fadf861c201e19",
+  "command_options": {
+    "group": "all",
+    "cases": null,
+    "timeout_seconds": 300
+  },
+  "runs": [
+    {
+      "name": "security",
+      "passed": true,
+      "timeout": false,
+      "exit_code": 0,
+      "seconds": 19.676,
+      "expected_unreachable": null,
+      "results": [
+        {
+          "query": "not attacker(secret_msg[])",
+          "result": "is true"
+        },
+        {
+          "query": "not attacker(secret_msg_reverse[])",
+          "result": "is true"
+        },
+        {
+          "query": "not attacker(qkd_k(R0,R1))",
+          "result": "is true"
+        },
+        {
+          "query": "not attacker(qkd_k(R1,R2))",
+          "result": "is true"
+        },
+        {
+          "query": "not attacker(qkd_k(R1,R0))",
+          "result": "is true"
+        },
+        {
+          "query": "not attacker(qkd_k(R2,R1))",
+          "result": "is true"
+        },
+        {
+          "query": "event(CtrlIssuedCert(rid_7,n_7,m,pb)) ==> event(CtrlGotAttest(rid_7,n_7,m))",
+          "result": "is true"
+        },
+        {
+          "query": "event(CtrlGotAttest(rid_7,n_7,m)) ==> event(CtrlGotRegister(rid_7))",
+          "result": "is true"
+        },
+        {
+          "query": "inj-event(CtrlIssuedCert(rid_7,n_7,m,pb)) ==> inj-event(CtrlGotAttest(rid_7,n_7,m))",
+          "result": "is true"
+        },
+        {
+          "query": "inj-event(CtrlGotAttest(rid_7,n_7,m)) ==> inj-event(RelaySignedReport(rid_7,n_7,m))",
+          "result": "is true"
+        },
+        {
+          "query": "event(RelayGotHop(m,f,t)) ==> event(HopSent(m,f,t))",
+          "result": "is true"
+        },
+        {
+          "query": "event(RelayGotHop(x,f,t)) ==> event(RelayLoadedCfg(t,n_7,f,r)) || event(RelayLoadedCfg(t,n_7,l,f))",
+          "result": "is true"
+        },
+        {
+          "query": "event(RelaySentHop(x,f,t)) ==> event(RelayLoadedCfg(f,n_7,l,t)) || event(RelayLoadedCfg(f,n_7,t,r))",
+          "result": "is true"
+        },
+        {
+          "query": "event(RelayLoadedCfg(rid_7,n_7,l,r)) ==> event(CtrlSentCfg(rid_7,n_7,l,r))",
+          "result": "is true"
+        },
+        {
+          "query": "event(RelayGotCert(rid_7,n_7,m,pb)) ==> event(CtrlIssuedCert(rid_7,n_7,m,pb))",
+          "result": "is true"
+        },
+        {
+          "query": "inj-event(HopPeerAuthenticated(f,t,ek_17,n_7)) ==> inj-event(HopSignedTranscript(f,t,ek_17,n_7))",
+          "result": "is true"
+        },
+        {
+          "query": "event(AppDelivered(m,f,t)) ==> event(HopSent(m,f,t))",
+          "result": "is true"
+        }
+      ],
+      "input": "security.pv",
+      "input_sha256": "ee12ca7e2f0114ed1a7bff4b6be730e91ab287ba10a95a3750fadf861c201e19",
+      "log": "security.log"
+    },
+    {
+      "name": "issue_r0",
+      "passed": true,
+      "timeout": false,
+      "exit_code": 0,
+      "seconds": 1.018,
+      "expected_unreachable": false,
+      "results": [
+        {
+          "query": "not event(CtrlIssuedCert(R0,n_7,m,pb))",
+          "result": "is false"
+        }
+      ],
+      "input": "issue_r0.pv",
+      "input_sha256": "1bc5a4bc6058474c25f906adf89e4ff6554cd7f48c65595aa372c2ba2442d16f",
+      "log": "issue_r0.log"
+    },
+    {
+      "name": "issue_r1",
+      "passed": true,
+      "timeout": false,
+      "exit_code": 0,
+      "seconds": 0.968,
+      "expected_unreachable": false,
+      "results": [
+        {
+          "query": "not event(CtrlIssuedCert(R1,n_7,m,pb))",
+          "result": "is false"
+        }
+      ],
+      "input": "issue_r1.pv",
+      "input_sha256": "bfede276514bb82f3940ddb56dbfc771a94d6aa57ccdfdf3696d7049dead23e5",
+      "log": "issue_r1.log"
+    },
+    {
+      "name": "issue_r2",
+      "passed": true,
+      "timeout": false,
+      "exit_code": 0,
+      "seconds": 0.968,
+      "expected_unreachable": false,
+      "results": [
+        {
+          "query": "not event(CtrlIssuedCert(R2,n_7,m,pb))",
+          "result": "is false"
+        }
+      ],
+      "input": "issue_r2.pv",
+      "input_sha256": "83b78a1157f8a54c58d80fc286586f743194fc21f1577dec75b624d7197158e3",
+      "log": "issue_r2.log"
+    },
+    {
+      "name": "cert_r0",
+      "passed": true,
+      "timeout": false,
+      "exit_code": 0,
+      "seconds": 0.968,
+      "expected_unreachable": false,
+      "results": [
+        {
+          "query": "not event(RelayGotCert(R0,n_7,m,pb))",
+          "result": "is false"
+        }
+      ],
+      "input": "cert_r0.pv",
+      "input_sha256": "db01603a0ea19767f3086e77588c78d9312ade5295a08a7d55f29bfe801b1c4f",
+      "log": "cert_r0.log"
+    },
+    {
+      "name": "cert_r1",
+      "passed": true,
+      "timeout": false,
+      "exit_code": 0,
+      "seconds": 0.968,
+      "expected_unreachable": false,
+      "results": [
+        {
+          "query": "not event(RelayGotCert(R1,n_7,m,pb))",
+          "result": "is false"
+        }
+      ],
+      "input": "cert_r1.pv",
+      "input_sha256": "8ed16f0d3f806cdb86d1f2c8a5a57d84c1761113c41ee9bd7e5fdaec40564c22",
+      "log": "cert_r1.log"
+    },
+    {
+      "name": "cert_r2",
+      "passed": true,
+      "timeout": false,
+      "exit_code": 0,
+      "seconds": 0.968,
+      "expected_unreachable": false,
+      "results": [
+        {
+          "query": "not event(RelayGotCert(R2,n_7,m,pb))",
+          "result": "is false"
+        }
+      ],
+      "input": "cert_r2.pv",
+      "input_sha256": "698a369cc12a0ae00369efe12adcd5c2e755f8fb98f35927e90f74f5b64d9e78",
+      "log": "cert_r2.log"
+    },
+    {
+      "name": "submit_forward",
+      "passed": true,
+      "timeout": false,
+      "exit_code": 0,
+      "seconds": 1.07,
+      "expected_unreachable": false,
+      "results": [
+        {
+          "query": "not event(AppSubmitted(secret_msg[],APP_L,R0))",
+          "result": "is false"
+        }
+      ],
+      "input": "submit_forward.pv",
+      "input_sha256": "de04068047d0a165fd8c7dbbcb25f76dc33837cd41c1b3e7140133dbccbd3bbe",
+      "log": "submit_forward.log"
+    },
+    {
+      "name": "submit_reverse",
+      "passed": true,
+      "timeout": false,
+      "exit_code": 0,
+      "seconds": 1.019,
+      "expected_unreachable": false,
+      "results": [
+        {
+          "query": "not event(AppSubmitted(secret_msg_reverse[],APP_R,R2))",
+          "result": "is false"
+        }
+      ],
+      "input": "submit_reverse.pv",
+      "input_sha256": "b14a01b3dbc54224e54363507c96fb2e8e798ee4d2cf412b43ff92cfe51af508",
+      "log": "submit_reverse.log"
+    },
+    {
+      "name": "receive_forward_0",
+      "passed": true,
+      "timeout": false,
+      "exit_code": 0,
+      "seconds": 1.02,
+      "expected_unreachable": false,
+      "results": [
+        {
+          "query": "not event(RelayGotHop(secret_msg[],APP_L,R0))",
+          "result": "is false"
+        }
+      ],
+      "input": "receive_forward_0.pv",
+      "input_sha256": "21543d1f13d5190eaa31a4e0f727dd66748a1f44792cdd0961fabe8903ecc4ce",
+      "log": "receive_forward_0.log"
+    },
+    {
+      "name": "receive_forward_1",
+      "passed": true,
+      "timeout": false,
+      "exit_code": 0,
+      "seconds": 1.068,
+      "expected_unreachable": false,
+      "results": [
+        {
+          "query": "not event(RelayGotHop(secret_msg[],R0,R1))",
+          "result": "is false"
+        }
+      ],
+      "input": "receive_forward_1.pv",
+      "input_sha256": "46a0698a09a7fa76786cbc87f650e6e18b779bcbed2b2f05c5c92c3a3621ee89",
+      "log": "receive_forward_1.log"
+    },
+    {
+      "name": "receive_forward_2",
+      "passed": true,
+      "timeout": false,
+      "exit_code": 0,
+      "seconds": 1.169,
+      "expected_unreachable": false,
+      "results": [
+        {
+          "query": "not event(RelayGotHop(secret_msg[],R1,R2))",
+          "result": "is false"
+        }
+      ],
+      "input": "receive_forward_2.pv",
+      "input_sha256": "31501fc8c70830f4eca33728053cb82b72a79d0af6b3d6a4cf5e4ac4d2babb74",
+      "log": "receive_forward_2.log"
+    },
+    {
+      "name": "receive_reverse_2",
+      "passed": true,
+      "timeout": false,
+      "exit_code": 0,
+      "seconds": 1.068,
+      "expected_unreachable": false,
+      "results": [
+        {
+          "query": "not event(RelayGotHop(secret_msg_reverse[],APP_R,R2))",
+          "result": "is false"
+        }
+      ],
+      "input": "receive_reverse_2.pv",
+      "input_sha256": "81a3bfa7c7ec6b0c4f7756d06b76d654b78d066bfe95da4bac06b0b50a69e3ad",
+      "log": "receive_reverse_2.log"
+    },
+    {
+      "name": "receive_reverse_1",
+      "passed": true,
+      "timeout": false,
+      "exit_code": 0,
+      "seconds": 1.018,
+      "expected_unreachable": false,
+      "results": [
+        {
+          "query": "not event(RelayGotHop(secret_msg_reverse[],R2,R1))",
+          "result": "is false"
+        }
+      ],
+      "input": "receive_reverse_1.pv",
+      "input_sha256": "182249095c12bb7ded5d319d2ed37ce4ff72de7dc02f0be420bbf1754d36a451",
+      "log": "receive_reverse_1.log"
+    },
+    {
+      "name": "receive_reverse_0",
+      "passed": true,
+      "timeout": false,
+      "exit_code": 0,
+      "seconds": 1.22,
+      "expected_unreachable": false,
+      "results": [
+        {
+          "query": "not event(RelayGotHop(secret_msg_reverse[],R1,R0))",
+          "result": "is false"
+        }
+      ],
+      "input": "receive_reverse_0.pv",
+      "input_sha256": "e381dceff659230000d2416b34dfcece0fb1b3ab0a14f6f270cfd4eabc7091ee",
+      "log": "receive_reverse_0.log"
+    },
+    {
+      "name": "deliver_forward",
+      "passed": true,
+      "timeout": false,
+      "exit_code": 0,
+      "seconds": 2.073,
+      "expected_unreachable": false,
+      "results": [
+        {
+          "query": "not event(AppDelivered(secret_msg[],R2,APP_R))",
+          "result": "is false"
+        }
+      ],
+      "input": "deliver_forward.pv",
+      "input_sha256": "cacb9c3fdac7c32512883cd9422efd108ec7eb074fedb52c525f924810e4da98",
+      "log": "deliver_forward.log"
+    },
+    {
+      "name": "deliver_reverse",
+      "passed": true,
+      "timeout": false,
+      "exit_code": 0,
+      "seconds": 2.121,
+      "expected_unreachable": false,
+      "results": [
+        {
+          "query": "not event(AppDelivered(secret_msg_reverse[],R0,APP_L))",
+          "result": "is false"
+        }
+      ],
+      "input": "deliver_reverse.pv",
+      "input_sha256": "9d85a3c306dc5ea40178f218c8807abefa3ea21d8a0daccf1ee728a86cc3726f",
+      "log": "deliver_reverse.log"
+    },
+    {
+      "name": "bad_image_signs",
+      "passed": true,
+      "timeout": false,
+      "exit_code": 0,
+      "seconds": 0.967,
+      "expected_unreachable": false,
+      "results": [
+        {
+          "query": "not event(RelaySignedReport(R1,n_7,bad_meas(R1)))",
+          "result": "is false"
+        }
+      ],
+      "input": "bad_image_signs.pv",
+      "input_sha256": "5f6c58c9deda80fb16030932a71b84ea106919249a31204d7032481b61c4cc3d",
+      "log": "bad_image_signs.log"
+    },
+    {
+      "name": "bad_image_rejected",
+      "passed": true,
+      "timeout": false,
+      "exit_code": 0,
+      "seconds": 0.967,
+      "expected_unreachable": true,
+      "results": [
+        {
+          "query": "not event(CtrlGotAttest(rid_7,n_7,bad_meas(rid_7)))",
+          "result": "is true"
+        }
+      ],
+      "input": "bad_image_rejected.pv",
+      "input_sha256": "c0790c92c4e3f64dfdcb9a152293fffd8bfdbbbb6af55f4ac03265b4c1297b02",
+      "log": "bad_image_rejected.log"
+    },
+    {
+      "name": "public_cert_replay_rejected",
+      "passed": true,
+      "timeout": false,
+      "exit_code": 0,
+      "seconds": 0.033,
+      "expected_unreachable": true,
+      "results": [
+        {
+          "query": "not event(RelayGotHop(tag_reg[],APP_L,R0))",
+          "result": "is true"
+        }
+      ],
+      "input": "public_cert_replay_rejected.pv",
+      "input_sha256": "c300b1aa958fc9370760cc39cd00b39fc9cdbb49171c247dc5af9e8058e1e259",
+      "log": "public_cert_replay_rejected.log"
+    },
+    {
+      "name": "possession_check_removed",
+      "passed": true,
+      "timeout": false,
+      "exit_code": 0,
+      "seconds": 0.033,
+      "expected_unreachable": false,
+      "results": [
+        {
+          "query": "not event(RelayGotHop(tag_reg[],APP_L,R0))",
+          "result": "is false"
+        }
+      ],
+      "input": "possession_check_removed.pv",
+      "input_sha256": "c7ed3eb002b3c11ca5552b40a4af6eac93934a0661eb4fa39b6fcdf3dcb8390e",
+      "log": "possession_check_removed.log"
+    }
+  ]
+}

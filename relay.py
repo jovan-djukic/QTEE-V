@@ -45,6 +45,8 @@ HOST = "127.0.0.1"
 CONTROLLER_HOST = "127.0.0.1"
 CONTROLLER_PORT = "8000"
 CTRL_TLS_PORT = 8001       # WolfSSL TLS port — all protocol steps after CA cert fetch
+# CN of the controller's TLS certificate (controller.py generate_controller_cert)
+CONTROLLER_CN = "QKD Relay Controller"
 KME_PORT = "8443"  # self-hosted next-door-key-simulator proxy port (all 4 KMEs)
 
 MLDSA_ALGORITHM = "ML-DSA-65"
@@ -282,7 +284,13 @@ def get_configuration(
     sock = socket.create_connection((controller_host, CTRL_TLS_PORT), timeout=30)
     try:
         with wolfssl_mldsa.pqc_tls_client_connect_anon(sock.fileno(), ca_der) as conn:
-            print(f"[*] WolfSSL TLS connected to controller")
+            # The CA check alone accepts any Relay-CA certificate (every relay's
+            # and app's too), so also require the controller's own identity.
+            ctrl_cn = _parse_x509_cert(conn.peer_cert_der())[0]
+            if ctrl_cn != CONTROLLER_CN:
+                raise RuntimeError(f"Controller identity mismatch: certificate CN is {ctrl_cn!r}, "
+                                   f"expected {CONTROLLER_CN!r}")
+            print(f"[*] WolfSSL TLS connected to controller (CN={ctrl_cn})")
 
             # ── Step 1: Register — get nonce ──────────────────────────────────
             print(f"[DEBUG] Sending register...")
@@ -371,9 +379,14 @@ def pqc_send_message(
     my_certificate: str,
     ca_certificate: str,
     message: dict,
-    relay_id: str
+    relay_id: str,
+    expected_peer_cn: str
 ):
-    """Send message to another relay via mTLS (WolfSSL TLS 1.3, ML-KEM-768 KEX, ML-DSA-65 certs)."""
+    """Send message to another relay via mTLS (WolfSSL TLS 1.3, ML-KEM-768 KEX, ML-DSA-65 certs).
+
+    The peer must present a Relay-CA certificate whose CN is expected_peer_cn,
+    the configured neighbour in the forwarding direction; anything else is
+    refused before the message is sent."""
     cert_der  = decode_pem(my_certificate, "CERTIFICATE")
     pkcs8_der = _pkcs8_mldsa65_der(my_private_key)
     ca_der    = decode_pem(ca_certificate, "CERTIFICATE")
@@ -384,6 +397,9 @@ def pqc_send_message(
 
         with wolfssl_mldsa.pqc_tls_client_connect(sock.fileno(), cert_der, pkcs8_der, ca_der) as conn:
             peer_cn, _, _, _, _ = _parse_x509_cert(conn.peer_cert_der())
+            if peer_cn != expected_peer_cn:
+                raise RuntimeError(f"Peer identity mismatch at {host}:{port}: certificate CN is "
+                                   f"{peer_cn!r}, expected {expected_peer_cn!r}")
             print(f"[{datetime.now():%H:%M:%S.%f}][{relay_id}] PQC mTLS connected to {peer_cn} at {host}:{port}")
 
             conn.sendmsg(json.dumps(message).encode())
@@ -727,6 +743,7 @@ def main(relay_id: str, port: int, print_semaphore: Semaphore) -> None:
 
             # Get next hop info
             to_ip = right_relay_ip if is_from_left else left_relay_ip
+            to_id = right_relay_id if is_from_left else left_relay_id
             
             # Extract message content
             from_ciphertext = from_message.get("message", "")
@@ -794,7 +811,8 @@ def main(relay_id: str, port: int, print_semaphore: Semaphore) -> None:
                     my_certificate=pqc_cert,
                     ca_certificate=PQC_CA_CERTIFICATE,
                     message=to_message,
-                    relay_id=relay_id
+                    relay_id=relay_id,
+                    expected_peer_cn=to_id
                 )
                 print(f"[{datetime.now():%H:%M:%S.%f}][{relay_id}] Message forwarded successfully")
             except Exception as e:

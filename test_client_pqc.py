@@ -240,8 +240,11 @@ def load_credentials() -> bool:
 
 # ==================== Send / Receive ====================
 
-def send_message(host: str, port: int, message: str) -> bool:
-    """Connect to a relay and send a message using WolfSSL mTLS."""
+def send_message(host: str, port: int, message: str, expect_peer: Optional[str] = None) -> bool:
+    """Connect to a relay and send a message using WolfSSL mTLS.
+
+    With expect_peer, the relay's certificate CN must equal it (APP_L sends
+    only to R0); the message is not sent otherwise."""
     print(f"[*] Connecting to {host}:{port}...")
 
     pkcs8_key = wolfssl_mldsa.pkcs8_mldsa65_der(PQC_PRIVATE_KEY)
@@ -258,6 +261,10 @@ def send_message(host: str, port: int, message: str) -> bool:
                 peer_der = tls.peer_cert_der()
                 peer_cn  = x509_get_cn(peer_der)
                 print(f"[+] mTLS established with {peer_cn}")
+                if expect_peer and peer_cn != expect_peer:
+                    print(f"[-] Peer identity mismatch: certificate CN is {peer_cn!r}, "
+                          f"expected {expect_peer!r}; not sending")
+                    return False
 
                 # Send message (length-prefixed, plaintext inside TLS)
                 msg = {"message": message, "key_ID": ""}
@@ -281,8 +288,11 @@ def send_message(host: str, port: int, message: str) -> bool:
         return False
 
 
-def receive_message(port: int) -> bool:
-    """Listen for one message from a relay using WolfSSL mTLS."""
+def receive_message(port: int, expect_peer: Optional[str] = None) -> bool:
+    """Listen for one message from a relay using WolfSSL mTLS.
+
+    With expect_peer, a connection whose certificate CN differs (APP_R accepts
+    only from R2) is refused and the listener keeps waiting."""
     print(f"[*] Listening on 0.0.0.0:{port}...")
 
     pkcs8_key = wolfssl_mldsa.pkcs8_mldsa65_der(PQC_PRIVATE_KEY)
@@ -293,36 +303,12 @@ def receive_message(port: int) -> bool:
             server_sock.bind(("0.0.0.0", port))
             server_sock.listen(5)
 
-            print("[*] Waiting for connection...")
-            conn, addr = server_sock.accept()
-            print(f"[*] Connection from {addr}")
-
-            try:
-                print("[*] Performing WolfSSL mTLS handshake (server)...")
-                with wolfssl_mldsa.pqc_tls_server_accept(
-                        conn.fileno(), PQC_CERTIFICATE, pkcs8_key, PQC_CA_CERT_DER) as tls:
-
-                    peer_der = tls.peer_cert_der()
-                    peer_cn  = x509_get_cn(peer_der)
-                    print(f"[+] mTLS from {peer_cn}")
-
-                    # Receive message (length-prefixed, plaintext inside TLS)
-                    msg_bytes = tls.recvmsg()
-                    msg = json.loads(msg_bytes.decode())
-
-                    print(f"\n{'='*50}")
-                    print(f"MESSAGE FROM {peer_cn}")
-                    print(f"{'='*50}")
-                    print(f"Content: {msg.get('message', '(empty)')}")
-                    if msg.get('key_ID'):
-                        print(f"Key ID: {msg['key_ID']}")
-                    print(f"{'='*50}\n")
-
-                    # Send ACK
-                    tls.sendmsg(b"RECEIVED")
-
-            finally:
-                conn.close()
+            while True:
+                print("[*] Waiting for connection...")
+                conn, addr = server_sock.accept()
+                print(f"[*] Connection from {addr}")
+                if _receive_one(conn, pkcs8_key, expect_peer):
+                    break
 
         return True
 
@@ -331,6 +317,39 @@ def receive_message(port: int) -> bool:
         import traceback
         traceback.print_exc()
         return False
+
+
+def _receive_one(conn, pkcs8_key: bytes, expect_peer: Optional[str]) -> bool:
+    """Handle one connection; False if it was refused (wrong peer)."""
+    try:
+        print("[*] Performing WolfSSL mTLS handshake (server)...")
+        with wolfssl_mldsa.pqc_tls_server_accept(
+                conn.fileno(), PQC_CERTIFICATE, pkcs8_key, PQC_CA_CERT_DER) as tls:
+
+            peer_der = tls.peer_cert_der()
+            peer_cn  = x509_get_cn(peer_der)
+            print(f"[+] mTLS from {peer_cn}")
+            if expect_peer and peer_cn != expect_peer:
+                print(f"[-] Refused: certificate CN is {peer_cn!r}, expected {expect_peer!r}")
+                return False
+
+            # Receive message (length-prefixed, plaintext inside TLS)
+            msg_bytes = tls.recvmsg()
+            msg = json.loads(msg_bytes.decode())
+
+            print(f"\n{'='*50}")
+            print(f"MESSAGE FROM {peer_cn}")
+            print(f"{'='*50}")
+            print(f"Content: {msg.get('message', '(empty)')}")
+            if msg.get('key_ID'):
+                print(f"Key ID: {msg['key_ID']}")
+            print(f"{'='*50}\n")
+
+            # Send ACK
+            tls.sendmsg(b"RECEIVED")
+            return True
+    finally:
+        conn.close()
 
 
 # ==================== Main ====================
@@ -371,6 +390,9 @@ Examples:
     parser.add_argument("--message", "-m", type=str,
                         default="Hello from test client!",
                         help="Message to send (default: 'Hello from test client!')")
+    parser.add_argument("--expect-peer", type=str, default=None, metavar="CN",
+                        help="Require the relay's certificate CN to be this (APP_L: R0 for "
+                             "--send; APP_R: R2 for --receive). Off by default.")
 
     args = parser.parse_args()
 
@@ -394,12 +416,12 @@ Examples:
         host  = parts[0]
         port  = int(parts[1]) if len(parts) > 1 else 9000
         print(f"\n[*] Sending to {host}:{port}...")
-        if not send_message(host, port, args.message):
+        if not send_message(host, port, args.message, args.expect_peer):
             sys.exit(1)
 
     if args.receive:
         print(f"\n[*] Starting listener on port {args.port}...")
-        if not receive_message(args.port):
+        if not receive_message(args.port, args.expect_peer):
             sys.exit(1)
 
     if not args.generate_credentials and not args.send and not args.receive:
