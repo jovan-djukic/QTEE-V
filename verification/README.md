@@ -110,10 +110,10 @@ to forward unless the next hop's certificate CN is the configured neighbour in
 that direction; incoming peers are restricted by the neighbour whitelist. The test
 client enforces its neighbour with `--expect-peer` (APP_L: R0, APP_R: R2). Tests 7
 and 8 of `demo/run_demo.py` exercise the outgoing checks against impostors holding
-genuine Relay-CA certificates for other identities. The model repair itself
+genuine CA-signed certificates for other identities. The model repair itself
 changes no runtime code.
 
-Private QKD-key provisioning, hardware-key isolation and the Relay CA remain trust
+Private QKD-key provisioning, hardware-key isolation and the CA remain trust
 assumptions. A private key-source query cannot validate an unmodeled KME channel.
 Unexpected-image behavior is limited to ideal attestation report generation; it
 does not cover hardware compromise, side channels, rollback, invasive attacks or

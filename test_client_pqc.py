@@ -10,10 +10,10 @@ Usage:
     python test_client_pqc.py --generate-credentials
 
     # Send a message to R0 (left edge):
-    python test_client_pqc.py --send --target 127.0.0.1:9000 --message "Hello!"
+    python test_client_pqc.py --send --target 127.0.0.1:9000 --expect-peer R0 --message "Hello!"
 
     # Listen for incoming messages:
-    python test_client_pqc.py --receive --port 8998
+    python test_client_pqc.py --receive --port 8998 --expect-peer R0
 """
 
 import argparse
@@ -364,16 +364,16 @@ Examples:
   python test_client_pqc.py --generate-credentials
 
   # Send message to left edge (R0):
-  python test_client_pqc.py --send --target 127.0.0.1:9000 --message "Hello!"
+  python test_client_pqc.py --send --target 127.0.0.1:9000 --expect-peer R0 --message "Hello!"
 
   # Send message to right edge (R2):
-  python test_client_pqc.py --send --target 127.0.0.1:9002 --message "Hello!"
+  python test_client_pqc.py --send --target 127.0.0.1:9002 --expect-peer R2 --message "Hello!"
 
   # Listen for messages on port 8998:
-  python test_client_pqc.py --receive --port 8998
+  python test_client_pqc.py --receive --port 8998 --expect-peer R0
 
   # Both generate credentials and listen:
-  python test_client_pqc.py --generate-credentials --receive --port 8998
+  python test_client_pqc.py --generate-credentials --receive --port 8998 --expect-peer R0
 """
     )
 
@@ -391,10 +391,15 @@ Examples:
                         default="Hello from test client!",
                         help="Message to send (default: 'Hello from test client!')")
     parser.add_argument("--expect-peer", type=str, default=None, metavar="CN",
-                        help="Require the relay's certificate CN to be this (APP_L: R0 for "
-                             "--send; APP_R: R2 for --receive). Off by default.")
+                        help="The relay's certificate CN must be this (APP_L: R0 for --send; "
+                             "APP_R: R2 for --receive). Required with --send and --receive: "
+                             "relays and KMEs hold certs from the same CA as this client, so "
+                             "the CA check alone doesn't identify the relay.")
 
     args = parser.parse_args()
+
+    if (args.send or args.receive) and not args.expect_peer:
+        parser.error("--send and --receive require --expect-peer")
 
     print("=" * 50)
     print("PQC Test Client (WolfSSL mTLS)")

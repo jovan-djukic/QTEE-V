@@ -206,6 +206,8 @@ typedef struct {
     char *right_kme;
     char *left_kme_ip;   /* IP address for left KME (avoids gethostbyname / futex) */
     char *right_kme_ip;  /* IP address for right KME */
+    char *left_kme_cn;   /* Certificate CN expected from the left KME */
+    char *right_kme_cn;  /* Certificate CN expected from the right KME */
     char *left_cn;
     char *right_cn;
     char *left_kme_peer;
@@ -213,16 +215,10 @@ typedef struct {
     char *whitelist;
 
     /* PQC credentials -- one identity cert, used for relay-to-relay mTLS
-     * AND relay-to-KME auth (the KME verifies it against a copy of the
-     * Relay CA the controller handed it; see kme_ca_certificate below). */
+     * AND relay-to-KME auth (the KME verifies it against the same CA). */
     unsigned char pqc_private_key[MLDSA65_SECRET_KEY_SIZE];
     unsigned char pqc_public_key[MLDSA65_PUBLIC_KEY_SIZE];
     char *pqc_certificate;
-
-    /* KME CA certificate -- NOT pre-deployed; delivered by the controller
-     * over the already-authenticated TLS channel. Verifies a KME's own
-     * server cert. This relay never has the KME CA's private key. */
-    char *kme_ca_certificate;
 } relay_config_t;
 
 typedef struct {
@@ -1206,7 +1202,7 @@ char *get_attestation_report(const char *nonce, const char *relay_id) {
 #endif
 
 /* CN of the controller's TLS certificate (controller.py generate_controller_cert).
- * The CA check alone accepts any Relay-CA certificate -- every relay's and
+ * The CA check alone accepts any CA-signed certificate -- every relay's and
  * app's too -- so the controller's identity is checked as well. */
 #define CONTROLLER_CN "QKD Relay Controller"
 
@@ -1413,20 +1409,21 @@ int get_configuration(const char *controller_host, int controller_port,
         config->right_kme           = extract_json_string(config_json, "right_kme");
         config->left_kme_ip        = extract_json_string(config_json, "left_kme_ip");
         config->right_kme_ip       = extract_json_string(config_json, "right_kme_ip");
+        config->left_kme_cn         = extract_json_string(config_json, "left_kme_cn");
+        config->right_kme_cn        = extract_json_string(config_json, "right_kme_cn");
         config->left_cn             = extract_json_string(config_json, "left_cn");
         config->right_cn            = extract_json_string(config_json, "right_cn");
         config->left_kme_peer       = extract_json_string(config_json, "left_kme_peer");
         config->right_kme_peer      = extract_json_string(config_json, "right_kme_peer");
         config->whitelist           = extract_json_string(config_json, "whitelist");
-        config->kme_ca_certificate  = extract_json_string(config_json, "kme_ca_certificate");
 
         free(config_json);
     }
 
     /* ── Step 4: Generate an identity keypair and request a certificate ───
-     * This one ML-DSA-65 cert (Relay CA-signed) is used everywhere: relay
-     * <-> relay mTLS, and now relay <-> KME auth too (the KME trusts it via
-     * the Relay CA cert the controller handed it in kme_ca_certificate). */
+     * This one ML-DSA-65 cert is used everywhere: relay <-> relay mTLS, and
+     * relay <-> KME auth too (the KME checks it against the same CA and
+     * requires CN == its ATTACHED_SAE_ID). */
     fprintf(stderr, "[DEBUG] Generating ML-DSA-65 keypair...\n");
     if (pqc_mldsa_generate_keypair(config->pqc_public_key, config->pqc_private_key) != 0) {
         fprintf(stderr, "[ERROR] Failed to generate ML-DSA keypair\n");
@@ -1487,10 +1484,12 @@ fail_tls:
 char *kme_request(const unsigned char *sae_sk,
                   const char *cert_pem, const char *ca_pem,
                   const char *kme_host, const char *kme_ip, int kme_port,
-                  const char *path) {
+                  const char *kme_cn, const char *path) {
     /* kme_ip is the numeric IP address used for tcp_connect() to avoid
      * gethostbyname() which triggers futex/pthreads in Keystone enclaves.
-     * kme_host is still used for the HTTP Host header. */
+     * kme_host is still used for the HTTP Host header.
+     * The server's CN must be kme_cn: every entity's cert comes from the same
+     * CA, so another relay's valid cert must not pass as this KME. */
     const char *connect_addr = (kme_ip && kme_ip[0]) ? kme_ip : kme_host;
 
     int cert_der_len, ca_der_len;
@@ -1527,6 +1526,16 @@ char *kme_request(const unsigned char *sae_sk,
     }
     free(ca_der);
 
+    char peer_cn[MAX_CN_SIZE];
+    tls_get_peer_cn(ssl, peer_cn, MAX_CN_SIZE);
+    if (!kme_cn || strcmp(peer_cn, kme_cn) != 0) {
+        fprintf(stderr, "[ERROR] kme_request: KME identity mismatch at %s:%d: "
+                "certificate CN is '%s', expected '%s'\n",
+                connect_addr, kme_port, peer_cn, kme_cn ? kme_cn : "(none)");
+        wolfSSL_shutdown(ssl); wolfSSL_free(ssl); close(sock); wolfSSL_CTX_free(ctx);
+        return NULL;
+    }
+
     char request[1024];
     sprintf(request,
             "GET %s HTTP/1.1\r\n"
@@ -1561,19 +1570,19 @@ char *kme_request(const unsigned char *sae_sk,
 char *kme_get_key(const unsigned char *sae_sk,
                   const char *cert, const char *ca,
                   const char *kme_host, const char *kme_ip, int kme_port,
-                  const char *kme_peer) {
+                  const char *kme_cn, const char *kme_peer) {
     char path[512];
     sprintf(path, "/api/v1/keys/%s/enc_keys", kme_peer);
-    return kme_request(sae_sk, cert, ca, kme_host, kme_ip, kme_port, path);
+    return kme_request(sae_sk, cert, ca, kme_host, kme_ip, kme_port, kme_cn, path);
 }
 
 char *kme_get_key_with_id(const unsigned char *sae_sk,
                           const char *cert, const char *ca,
                           const char *kme_host, const char *kme_ip, int kme_port,
-                          const char *kme_peer, const char *key_id) {
+                          const char *kme_cn, const char *kme_peer, const char *key_id) {
     char path[512];
     sprintf(path, "/api/v1/keys/%s/dec_keys?key_ID=%s", kme_peer, key_id);
-    return kme_request(sae_sk, cert, ca, kme_host, kme_ip, kme_port, path);
+    return kme_request(sae_sk, cert, ca, kme_host, kme_ip, kme_port, kme_cn, path);
 }
 
 /* ==================== QKD Encryption/Decryption ==================== */
@@ -1781,6 +1790,21 @@ static WOLFSSL_CTX *pqc_make_tls_ctx(int is_server,
  * Extract the CN from the TLS peer's certificate.
  * Uses our X.509 DER parser on the raw cert bytes from WolfSSL.
  */
+/* Exact match of cn against one entry of a '|'-separated whitelist. */
+static int whitelist_contains(const char *whitelist, const char *cn) {
+    size_t cn_len = strlen(cn);
+    if (cn_len == 0) return 0;
+
+    const char *entry = whitelist;
+    while (1) {
+        const char *sep = strchr(entry, '|');
+        size_t entry_len = sep ? (size_t)(sep - entry) : strlen(entry);
+        if (entry_len == cn_len && memcmp(entry, cn, cn_len) == 0) return 1;
+        if (!sep) return 0;
+        entry = sep + 1;
+    }
+}
+
 static void tls_get_peer_cn(WOLFSSL *ssl, char *cn, int cn_max) {
     cn[0] = '\0';
 
@@ -1814,7 +1838,7 @@ static void tls_get_peer_cn(WOLFSSL *ssl, char *cn, int cn_max) {
 
 /*
  * Send a JSON message to a remote relay using WolfSSL mTLS.
- * Acts as TLS client. The peer must present a Relay-CA certificate whose CN
+ * Acts as TLS client. The peer must present a CA-signed certificate whose CN
  * is expected_cn (the configured neighbour in the forwarding direction);
  * otherwise nothing is sent.
  */
@@ -2027,7 +2051,7 @@ pqc_message_t pqc_receive_message(int port, const unsigned char *my_sk,
     fprintf(stderr, "[%s][%s] PQC TLS from %s\n", ts, relay_id, peer_cn);
 
     /* Whitelist check */
-    if (whitelist && strlen(whitelist) > 0 && !strstr(whitelist, peer_cn)) {
+    if (whitelist && strlen(whitelist) > 0 && !whitelist_contains(whitelist, peer_cn)) {
         get_timestamp(ts, sizeof(ts));
         fprintf(stderr, "[%s][%s] Rejected: %s not in whitelist\n", ts, relay_id, peer_cn);
         wolfSSL_shutdown(ssl); wolfSSL_free(ssl);
@@ -2069,7 +2093,7 @@ void free_config(relay_config_t *c) {
     free(c->left_cn);            free(c->right_cn);
     free(c->left_kme_peer);      free(c->right_kme_peer);
     free(c->whitelist);          free(c->pqc_certificate);
-    free(c->kme_ca_certificate);
+    free(c->left_kme_cn);        free(c->right_kme_cn);
     free(c);
 }
 
@@ -2148,10 +2172,12 @@ int main(int argc, char *argv[]) {
         const char *kme_dec      = is_from_left ? config->left_kme      : config->right_kme;
         const char *kme_dec_ip   = is_from_left ? config->left_kme_ip  : config->right_kme_ip;
         const char *kme_dec_peer = is_from_left ? config->left_kme_peer : config->right_kme_peer;
+        const char *kme_dec_cn   = is_from_left ? config->left_kme_cn : config->right_kme_cn;
 
         const char *kme_enc      = is_from_left ? config->right_kme     : config->left_kme;
         const char *kme_enc_ip   = is_from_left ? config->right_kme_ip : config->left_kme_ip;
         const char *kme_enc_peer = is_from_left ? config->right_kme_peer : config->left_kme_peer;
+        const char *kme_enc_cn   = is_from_left ? config->right_kme_cn : config->left_kme_cn;
 
         const char *to_ip = is_from_left ? config->right_relay_ip : config->left_relay_ip;
 
@@ -2170,8 +2196,8 @@ int main(int argc, char *argv[]) {
             fprintf(stderr, "[%s][%s] Getting decryption key from KME %s key_ID=%s...\n",
                     ts, relay_id, kme_dec, from_key_id);
             char *key_resp = kme_get_key_with_id(config->pqc_private_key,
-                                                  config->pqc_certificate, config->kme_ca_certificate,
-                                                  kme_dec_host, kme_dec_ip, kme_dec_port, kme_dec_peer, from_key_id);
+                                                  config->pqc_certificate, PQC_CA_CERTIFICATE,
+                                                  kme_dec_host, kme_dec_ip, kme_dec_port, kme_dec_cn, kme_dec_peer, from_key_id);
             if (key_resp) {
                 char *key_val = extract_json_string(key_resp, "key");
                 if (key_val) {
@@ -2183,6 +2209,18 @@ int main(int argc, char *argv[]) {
                 }
                 free(key_resp);
             }
+        }
+
+        /* Without the key this is still ciphertext: don't pass it on as plaintext. */
+        if (!plaintext && kme_dec && strlen(kme_dec) > 0 && from_key_id && strlen(from_key_id) > 0) {
+            get_timestamp(ts, sizeof(ts));
+            fprintf(stderr, "[%s][%s] No QKD key from KME %s for key_ID=%s: message dropped\n",
+                    ts, relay_id, kme_dec, from_key_id);
+            free(from_ct);
+            free(from_key_id);
+            free(msg.message);
+            free(msg.sender_cn);
+            continue;
         }
 
         if (!plaintext) plaintext = from_ct ? strdup(from_ct) : strdup("");
@@ -2198,8 +2236,8 @@ int main(int argc, char *argv[]) {
             get_timestamp(ts, sizeof(ts));
             fprintf(stderr, "[%s][%s] Getting encryption key from KME %s...\n", ts, relay_id, kme_enc);
             char *key_resp = kme_get_key(config->pqc_private_key,
-                                          config->pqc_certificate, config->kme_ca_certificate,
-                                          kme_enc_host, kme_enc_ip, kme_enc_port, kme_enc_peer);
+                                          config->pqc_certificate, PQC_CA_CERTIFICATE,
+                                          kme_enc_host, kme_enc_ip, kme_enc_port, kme_enc_cn, kme_enc_peer);
             if (key_resp) {
                 char *key_val = extract_json_string(key_resp, "key");
                 to_key_id = extract_json_string(key_resp, "key_ID");
@@ -2212,6 +2250,20 @@ int main(int argc, char *argv[]) {
                 }
                 free(key_resp);
             }
+        }
+
+        /* A KME-backed hop must not fall back to plaintext: a refused KME
+         * (e.g. the identity check in kme_request) would strip the QKD layer. */
+        if (!to_ct && kme_enc && strlen(kme_enc) > 0) {
+            get_timestamp(ts, sizeof(ts));
+            fprintf(stderr, "[%s][%s] No QKD key from KME %s: message dropped\n", ts, relay_id, kme_enc);
+            free(to_key_id);
+            free(plaintext);
+            free(from_ct);
+            free(from_key_id);
+            free(msg.message);
+            free(msg.sender_cn);
+            continue;
         }
 
         if (!to_ct)     to_ct     = strdup(plaintext);

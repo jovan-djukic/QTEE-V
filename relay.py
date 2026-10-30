@@ -11,11 +11,11 @@ certs for signatures. Three connection types, not two:
    this point and is instead authenticated via HW attestation inside the
    tunnel. Not mTLS.
 2. Relay <-> relay channel -- true mTLS (pqc_tls_client_connect()), both
-   sides present ML-DSA-65 certs signed by the Relay CA. Custom
+   sides present ML-DSA-65 certs signed by the one CA. Custom
    length-prefixed message framing (pqc_send_message/pqc_receive_message).
-3. Relay <-> KME channel -- also true mTLS, same Relay CA identity cert
-   reused (no separate KME-facing cert), verified by the KME against a
-   copy of that same Relay CA. Hand-rolled HTTP/1.1 over the mTLS tunnel
+3. Relay <-> KME channel -- also true mTLS, same identity cert reused (no
+   separate KME-facing cert), verified by the KME against that same CA, and
+   the KME's CN checked by the relay. Hand-rolled HTTP/1.1 over the mTLS tunnel
    (_kme_http_get()), since the KME speaks ETSI GS QKD 014 over HTTP, not
    the relay's own message protocol.
 """
@@ -51,19 +51,14 @@ KME_PORT = "8443"  # self-hosted next-door-key-simulator proxy port (all 4 KMEs)
 
 MLDSA_ALGORITHM = "ML-DSA-65"
 
-# Relay CA certificate — pre-deployed in firmware, loaded from disk at
+# CA certificate — pre-deployed in firmware, loaded from disk at
 # startup. NOT fetched over the network; the file must exist before the
-# relay starts. Signs the controller's cert, this relay's own identity
-# cert, and (since that same cert now doubles as the relay's SAE identity)
-# is what each KME checks a relay's client cert against.
+# relay starts. The one CA for every entity: it signs the controller's cert,
+# this relay's own identity cert (which doubles as its SAE identity), and the
+# KMEs' and apps' certs. Being signed by it says nothing about what a peer is,
+# so every connection also checks the peer's exact CN.
 PQC_CA_CERT_PATH = "./pqc_ca/ca_certificate.pem"
 PQC_CA_CERTIFICATE: Optional[str] = None
-
-# KME CA certificate — NOT pre-deployed; delivered by the controller over
-# the already-authenticated TLS channel (see configuration["kme_ca_certificate"]).
-# Used to verify a KME's own server cert. The relay never has this CA's
-# private key.
-KME_CA_CERTIFICATE: Optional[str] = None
 
 
 # ==================== PEM Decoding ====================
@@ -284,7 +279,7 @@ def get_configuration(
     sock = socket.create_connection((controller_host, CTRL_TLS_PORT), timeout=30)
     try:
         with wolfssl_mldsa.pqc_tls_client_connect_anon(sock.fileno(), ca_der) as conn:
-            # The CA check alone accepts any Relay-CA certificate (every relay's
+            # The CA check alone accepts any CA-signed certificate (every relay's
             # and app's too), so also require the controller's own identity.
             ctrl_cn = _parse_x509_cert(conn.peer_cert_der())[0]
             if ctrl_cn != CONTROLLER_CN:
@@ -332,14 +327,13 @@ def get_configuration(
                 raise RuntimeError(f"Configuration failed: {configuration['error']}")
             print(f"[DEBUG] Received configuration")
 
-            global PQC_CA_CERTIFICATE, KME_CA_CERTIFICATE
+            global PQC_CA_CERTIFICATE
             PQC_CA_CERTIFICATE = ca_pem   # already loaded from pre-deployed file
-            KME_CA_CERTIFICATE = configuration.get("kme_ca_certificate", "")
 
             # ── Step 4: Generate identity keypair and request a certificate ───
-            # This one ML-DSA-65 cert (Relay CA-signed) is used everywhere:
-            # relay <-> relay mTLS, and now relay <-> KME auth too (the KME
-            # trusts it via the Relay CA cert the controller handed it).
+            # This one ML-DSA-65 cert is used everywhere: relay <-> relay mTLS,
+            # and relay <-> KME auth too (the KME checks it against the same CA
+            # and requires CN == its ATTACHED_SAE_ID).
             print(f"[DEBUG] Generating ML-DSA-65 keypair for relay identity...")
             pqc_pk, pqc_sk = mldsa_generate_keypair()
 
@@ -384,7 +378,7 @@ def pqc_send_message(
 ):
     """Send message to another relay via mTLS (WolfSSL TLS 1.3, ML-KEM-768 KEX, ML-DSA-65 certs).
 
-    The peer must present a Relay-CA certificate whose CN is expected_peer_cn,
+    The peer must present a CA-signed certificate whose CN is expected_peer_cn,
     the configured neighbour in the forwarding direction; anything else is
     refused before the message is sent."""
     cert_der  = decode_pem(my_certificate, "CERTIFICATE")
@@ -484,9 +478,13 @@ def _kme_http_get(
     ca_certificate: str,
     kme_host: str,
     kme_port: str,
+    kme_cn: str,
     path: str
 ) -> _KmeHttpResponse:
-    """Issue an HTTP GET to a KME over mTLS (ML-KEM-768 + ML-DSA-65) and return the response."""
+    """Issue an HTTP GET to a KME over mTLS (ML-KEM-768 + ML-DSA-65) and return the response.
+
+    The server's CN must be kme_cn: every entity's cert comes from the same CA,
+    so another relay's valid cert must not pass as this KME."""
     cert_der = decode_pem(certificate, "CERTIFICATE")
     ca_der = decode_pem(ca_certificate, "CERTIFICATE")
     pkcs8_der = _pkcs8_mldsa65_der(private_key)
@@ -494,6 +492,10 @@ def _kme_http_get(
     sock = socket.create_connection((kme_host, int(kme_port)), timeout=30)
     try:
         with wolfssl_mldsa.pqc_tls_client_connect(sock.fileno(), cert_der, pkcs8_der, ca_der) as conn:
+            peer_cn, _, _, _, _ = _parse_x509_cert(conn.peer_cert_der())
+            if peer_cn != kme_cn:
+                raise RuntimeError(f"KME identity mismatch at {kme_host}:{kme_port}: certificate CN is "
+                                   f"{peer_cn!r}, expected {kme_cn!r}")
             request = (
                 f"GET {path} HTTP/1.1\r\n"
                 f"Host: {kme_host}\r\n"
@@ -516,10 +518,11 @@ def kme_get_status(
     ca_certificate: str,
     kme_host: str,
     kme_port: str,
+    kme_cn: str,
     kme_slave: str
 ):
     """Get status from KME."""
-    return _kme_http_get(private_key, certificate, ca_certificate, kme_host, kme_port,
+    return _kme_http_get(private_key, certificate, ca_certificate, kme_host, kme_port, kme_cn,
                           f"/api/v1/keys/{kme_slave}/status")
 
 
@@ -529,10 +532,11 @@ def kme_get_key(
     ca_certificate: str,
     kme_host: str,
     kme_port: str,
+    kme_cn: str,
     kme_slave: str
 ):
     """Get encryption key from KME."""
-    return _kme_http_get(private_key, certificate, ca_certificate, kme_host, kme_port,
+    return _kme_http_get(private_key, certificate, ca_certificate, kme_host, kme_port, kme_cn,
                           f"/api/v1/keys/{kme_slave}/enc_keys").json()
 
 
@@ -542,11 +546,12 @@ def kme_get_key_with_id(
     ca_certificate: str,
     kme_host: str,
     kme_port: str,
+    kme_cn: str,
     kme_master: str,
     key_id: str
 ):
     """Get decryption key from KME by ID."""
-    return _kme_http_get(private_key, certificate, ca_certificate, kme_host, kme_port,
+    return _kme_http_get(private_key, certificate, ca_certificate, kme_host, kme_port, kme_cn,
                           f"/api/v1/keys/{kme_master}/dec_keys?key_ID={key_id}").json()
 
 
@@ -644,8 +649,7 @@ def main(relay_id: str, port: int, print_semaphore: Semaphore) -> None:
     print_semaphore.release()
     
     # PQC credentials -- one identity cert, used for relay-to-relay mTLS
-    # AND relay-to-KME auth (the KME verifies it against a copy of the
-    # Relay CA the controller handed it; see KME_CA_CERTIFICATE).
+    # AND relay-to-KME auth (the KME verifies it against the same CA).
     pqc_sk = result["pqc_private_key"]
     pqc_pk = result["pqc_public_key"]
     pqc_cert = result["pqc_certificate"]
@@ -658,6 +662,8 @@ def main(relay_id: str, port: int, print_semaphore: Semaphore) -> None:
     right_kme = configuration.get("right_kme", "")
     left_kme_host, left_kme_port = _split_host_port(left_kme, KME_PORT)
     right_kme_host, right_kme_port = _split_host_port(right_kme, KME_PORT)
+    left_kme_cn = configuration.get("left_kme_cn", "")
+    right_kme_cn = configuration.get("right_kme_cn", "")
     left_kme_peer = configuration.get("left_kme_peer", "")
     right_kme_peer = configuration.get("right_kme_peer", "")
     whitelist = [item.strip() for item in configuration.get("whitelist", "").split("|") if item.strip()]
@@ -689,7 +695,7 @@ def main(relay_id: str, port: int, print_semaphore: Semaphore) -> None:
         print_semaphore.acquire()
         print(f"[{datetime.now():%H:%M:%S.%f}][{relay_id}] Testing left KME ({left_kme})...")
         try:
-            status = kme_get_status(pqc_sk, pqc_cert, KME_CA_CERTIFICATE, left_kme_host, left_kme_port, left_kme_peer)
+            status = kme_get_status(pqc_sk, pqc_cert, PQC_CA_CERTIFICATE, left_kme_host, left_kme_port, left_kme_cn, left_kme_peer)
             print(f"[{datetime.now():%H:%M:%S.%f}][{relay_id}] Left KME status: {status.status_code}")
         except Exception as e:
             print(f"[{datetime.now():%H:%M:%S.%f}][{relay_id}] Left KME error: {e}")
@@ -699,7 +705,7 @@ def main(relay_id: str, port: int, print_semaphore: Semaphore) -> None:
         print_semaphore.acquire()
         print(f"[{datetime.now():%H:%M:%S.%f}][{relay_id}] Testing right KME ({right_kme})...")
         try:
-            status = kme_get_status(pqc_sk, pqc_cert, KME_CA_CERTIFICATE, right_kme_host, right_kme_port, right_kme_peer)
+            status = kme_get_status(pqc_sk, pqc_cert, PQC_CA_CERTIFICATE, right_kme_host, right_kme_port, right_kme_cn, right_kme_peer)
             print(f"[{datetime.now():%H:%M:%S.%f}][{relay_id}] Right KME status: {status.status_code}")
         except Exception as e:
             print(f"[{datetime.now():%H:%M:%S.%f}][{relay_id}] Right KME error: {e}")
@@ -733,12 +739,14 @@ def main(relay_id: str, port: int, print_semaphore: Semaphore) -> None:
             kme_decrypt = left_kme if is_from_left else right_kme
             kme_decrypt_host = left_kme_host if is_from_left else right_kme_host
             kme_decrypt_port = left_kme_port if is_from_left else right_kme_port
+            kme_decrypt_cn = left_kme_cn if is_from_left else right_kme_cn
             kme_decrypt_peer = left_kme_peer if is_from_left else right_kme_peer
 
             # Get KME info for encryption (outgoing direction)
             kme_encrypt = right_kme if is_from_left else left_kme
             kme_encrypt_host = right_kme_host if is_from_left else left_kme_host
             kme_encrypt_port = right_kme_port if is_from_left else left_kme_port
+            kme_encrypt_cn = right_kme_cn if is_from_left else left_kme_cn
             kme_encrypt_peer = right_kme_peer if is_from_left else left_kme_peer
 
             # Get next hop info
@@ -755,9 +763,10 @@ def main(relay_id: str, port: int, print_semaphore: Semaphore) -> None:
                 get_key_response = kme_get_key_with_id(
                     private_key=pqc_sk,
                     certificate=pqc_cert,
-                    ca_certificate=KME_CA_CERTIFICATE,
+                    ca_certificate=PQC_CA_CERTIFICATE,
                     kme_host=kme_decrypt_host,
                     kme_port=kme_decrypt_port,
+                    kme_cn=kme_decrypt_cn,
                     kme_master=kme_decrypt_peer,
                     key_id=from_key_id
                 )
@@ -778,9 +787,10 @@ def main(relay_id: str, port: int, print_semaphore: Semaphore) -> None:
                 get_key_response = kme_get_key(
                     private_key=pqc_sk,
                     certificate=pqc_cert,
-                    ca_certificate=KME_CA_CERTIFICATE,
+                    ca_certificate=PQC_CA_CERTIFICATE,
                     kme_host=kme_encrypt_host,
                     kme_port=kme_encrypt_port,
+                    kme_cn=kme_encrypt_cn,
                     kme_slave=kme_encrypt_peer
                 )
                 to_key_id = get_key_response["keys"][0]["key_ID"]

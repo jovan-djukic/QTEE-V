@@ -417,36 +417,6 @@ def pqc_tls_server_accept(fd: int, cert_der: bytes, pkcs8_der: bytes, ca_der: by
     return conn
 
 
-def pqc_tls_server_accept_unverified(fd: int, cert_der: bytes, pkcs8_der: bytes,
-                                      ctx_ca_der: bytes) -> PqcTlsConn:
-    """Like pqc_tls_server_accept(), but skips the post-handshake peer-cert
-    check — the caller verifies later via verify_cert_der() with whichever
-    single CA is appropriate.
-
-    Used where the right CA to check against isn't known until after the
-    handshake (e.g. a KME server that must accept a relay's Relay-CA cert on
-    SAE-facing endpoints, or a peer KME's KME-CA cert on internal ones —
-    determined by request path, so verification has to wait until the
-    request has been read).
-
-    ctx_ca_der only has to be *some* valid CA DER for WolfSSL's context
-    setup; it has no bearing on which cert is actually accepted, since the
-    handshake-level chain check is bypassed regardless (see
-    pqc_tls_server_new / _pqc_verify_accept_all).
-    """
-    os.set_blocking(fd, True)
-    c, cl = _buf(cert_der)
-    k, kl = _buf(pkcs8_der)
-    a, al = _buf(ctx_ca_der)
-    handle = _lib.pqc_tls_server_new(c, cl, k, kl, a, al)
-    if not handle:
-        raise RuntimeError("pqc_tls_server_new failed")
-    if _lib.pqc_tls_accept(handle, fd) != 0:
-        _lib.pqc_tls_free(handle)
-        raise RuntimeError("TLS server handshake failed")
-    return PqcTlsConn(handle)
-
-
 def pqc_tls_client_connect(fd: int, cert_der: bytes, pkcs8_der: bytes, ca_der: bytes) -> PqcTlsConn:
     """Create client TLS context, perform mTLS handshake on fd, return PqcTlsConn.
 

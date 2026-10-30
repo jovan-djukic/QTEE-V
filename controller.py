@@ -27,8 +27,11 @@ Attestation:
   from the relay. All actions after register are bound to the TLS
   connection that registered, not to a relay_id the client names.
 
-One PKI domain: the controller signs everything (its own cert, relay
-identity certs, and KME/SAE identity certs) with a single ML-DSA-65 CA.
+One PKI domain: a single ML-DSA-65 CA signs every entity. The controller
+signs its own cert and relay identity certs with it; KME and app certs are
+signed with the same CA key on the host. Entities are told apart by exact
+certificate CN, so a relay_id must never collide with another entity's CN
+(see ALLOWED_RELAY_IDS).
 
 Usage:
   # Generate PQC CA:
@@ -72,19 +75,12 @@ CTRL_TLS_PORT = 8001
 # wolfssl_mldsa.Signature only supports ML-DSA-65 -- no detection needed.
 MLDSA_ALGORITHM = "ML-DSA-65"
 
-# Relay CA (for controller <-> relay, relay <-> relay, and now relay <-> KME
-# identity -- the controller signs and holds the private key)
+# The one CA for every entity (controller, relays, KMEs, apps). The controller
+# holds the private key, to sign its own cert and relay identity certs.
 PQC_CA_PRIVATE_KEY: Optional[bytes] = None
 PQC_CA_PUBLIC_KEY: Optional[bytes] = None
 PQC_CA_CERTIFICATE: Optional[str] = None
 PQC_CA_SUBJECT_CN: Optional[str] = None
-
-# KME CA (signs each KME's own server cert -- a *separate* trust domain so a
-# compromised controller/relay can't forge a cert a KME would trust, and
-# vice versa). The controller only ever reads this CA's public certificate,
-# to hand to relays so they can verify a KME's server cert -- it never has
-# and never needs the KME CA's private key.
-KME_CA_CERTIFICATE: Optional[str] = None
 
 # Controller's own ML-DSA-65 cert (for TLS server auth)
 CTRL_PRIVATE_KEY: Optional[bytes] = None
@@ -109,7 +105,6 @@ ATTESTATION_EVIDENCE_DIR: Optional[str] = None
 # CA file paths
 PQC_CA_CERT_PATH = "./pqc_ca/ca_certificate.pem"
 PQC_CA_KEY_PATH = "./pqc_ca/ca_private_key.pem"
-KME_CA_CERT_PATH = "./kme_ca/ca_certificate.pem"
 
 # ==================== Threading Primitives ====================
 
@@ -360,18 +355,6 @@ def load_pqc_ca_credentials(cert_path: str, key_path: str):
     print(f"  Public key size: {len(PQC_CA_PUBLIC_KEY)} bytes")
 
 
-def load_kme_ca_certificate(cert_path: str):
-    """Load the KME CA's *public* certificate only -- the controller never
-    holds the KME CA private key (see KME_CA_CERTIFICATE comment above)."""
-    global KME_CA_CERTIFICATE
-
-    with open(cert_path, 'r') as f:
-        KME_CA_CERTIFICATE = f.read()
-
-    cn, _, _ = _parse_x509_cert(decode_pem(KME_CA_CERTIFICATE, "CERTIFICATE"))
-    print(f"Loaded KME CA certificate: CN={cn} (public cert only, no private key)")
-
-
 def generate_controller_cert():
     """Generate the controller's own ML-DSA-65 certificate, signed by the PQC CA.
 
@@ -493,18 +476,31 @@ def unescape_json_string(s: str) -> str:
 # KME_PORT. If your Docker setup gives the host a real route to the bridge
 # network, "172.23.1.10:8443" (the container's own address) works too.
 # No SAE-specific naming here anymore: each relay presents its own single
-# PQC identity cert (pqc_certificate, signed by the Relay CA) as its SAE
+# PQC identity cert (pqc_certificate, signed by the CA) as its SAE
 # identity too, so a KME's ATTACHED_SAE_ID is just that relay's relay_id.
+# start_cn/end_cn are the certificate CNs a relay must see at those addresses:
+# relay and KME certs share one CA, so the CA check alone can't tell them apart.
 LINKS = [
     {
-        "start": "127.0.0.1:8010",   # kme-link0-start
-        "end": "127.0.0.1:8011",     # kme-link0-end
+        "start": "127.0.0.1:8010",
+        "start_cn": "kme-link0-start",
+        "end": "127.0.0.1:8011",
+        "end_cn": "kme-link0-end",
     },
     {
-        "start": "127.0.0.1:8012",   # kme-link1-start
-        "end": "127.0.0.1:8013",     # kme-link1-end
+        "start": "127.0.0.1:8012",
+        "start_cn": "kme-link1-start",
+        "end": "127.0.0.1:8013",
+        "end_cn": "kme-link1-end",
     }
 ]
+
+# The only IDs a relay can register as. A relay's certificate CN is its
+# relay_id and all entities share one CA, so an unchecked ID could yield a
+# certificate for another entity (e.g. CN=kme-link0-end, which KMEs accept on
+# their KME-to-KME endpoints). The enclave measurement doesn't cover the ID, so
+# genuine attestation doesn't prevent this.
+ALLOWED_RELAY_IDS = ("R0", "R1", "R2")
 
 
 class RelaySession:
@@ -614,6 +610,10 @@ def handle_register(data: dict, ctx: ConnContext) -> dict:
     try:
         relay_id = data["relay_id"]
         print(f"[{relay_id}] Register")
+
+        if relay_id not in ALLOWED_RELAY_IDS:
+            print(f"[{relay_id}] Refused: not a known relay ID")
+            return {"error": "Unknown relay ID"}
 
         if ctx.session is not None:
             return {"error": "Connection already registered"}
@@ -740,6 +740,8 @@ def handle_configuration(data: dict, ctx: ConnContext) -> dict:
             "right_relay_id": RELAYS[index + 1]["relay_id"] if index < len(RELAYS) - 1 else "test_client",
             "left_kme": f"{base_ip}:{left_kme_port}" if left_kme_port else "",
             "right_kme": f"{base_ip}:{right_kme_port}" if right_kme_port else "",
+            "left_kme_cn": LINKS[index - 1]["end_cn"] if index > 0 else "",
+            "right_kme_cn": LINKS[index]["start_cn"] if index < len(LINKS) else "",
             # This relay's own identity (its pqc_certificate CN) doubles as
             # its SAE ID on both KMEs it talks to -- no separate SAE cert.
             "left_cn": relay_id if index > 0 else "test_client",
@@ -750,8 +752,7 @@ def handle_configuration(data: dict, ctx: ConnContext) -> dict:
                 RELAYS[index - 1]["relay_id"] if index > 0 else "test_client",
                 RELAYS[index + 1]["relay_id"] if index < len(RELAYS) - 1 else "test_client",
             ])),
-            "pqc_ca_certificate": PQC_CA_CERTIFICATE,
-            "kme_ca_certificate": KME_CA_CERTIFICATE
+            "pqc_ca_certificate": PQC_CA_CERTIFICATE
         }
 
         configuration["left_kme_ip"] = url_to_ipv4(configuration["left_kme"]) if configuration["left_kme"] else ""
@@ -796,7 +797,7 @@ def handle_generate_certs(data: dict, ctx: ConnContext) -> dict:
             return {"error": "Failed to sign PQC certificate"}
         session.cert_issued = True
 
-        # This one cert (Relay CA-signed) is also presented to KMEs as the
+        # This one cert is also presented to KMEs as the
         # relay's SAE identity -- no separate KME-facing cert or CSR needed.
         print(f"[{relay_id}] Issued ML-DSA-65 certificate CN={relay_id} "
               f"(issuer CN={PQC_CA_SUBJECT_CN}, platform={session.platform})")
@@ -896,7 +897,6 @@ async def health_check():
     return {
         "status": "ok",
         "pqc_ca_loaded": PQC_CA_PRIVATE_KEY is not None,
-        "kme_ca_loaded": KME_CA_CERTIFICATE is not None,
         "ctrl_cert_loaded": CTRL_CERTIFICATE is not None,
         "ctrl_tls_port": CTRL_TLS_PORT,
         "signature_algorithm": MLDSA_ALGORITHM
@@ -906,9 +906,8 @@ async def health_check():
 # ==================== Main ====================
 
 parser = argparse.ArgumentParser(description="QKD Relay Hybrid PQC Controller")
-parser.add_argument("--pqc-ca-cert", default=PQC_CA_CERT_PATH, help="Path to Relay CA certificate")
-parser.add_argument("--pqc-ca-key", default=PQC_CA_KEY_PATH, help="Path to Relay CA private key")
-parser.add_argument("--kme-ca-cert", default=KME_CA_CERT_PATH, help="Path to KME CA certificate (public cert only)")
+parser.add_argument("--pqc-ca-cert", default=PQC_CA_CERT_PATH, help="Path to the CA certificate")
+parser.add_argument("--pqc-ca-key", default=PQC_CA_KEY_PATH, help="Path to the CA private key")
 parser.add_argument("--host", default="0.0.0.0", help="Host to bind to")
 parser.add_argument("--port", type=int, default=8000, help="HTTP port (for /ca_cert bootstrap)")
 parser.add_argument("--tls-port", type=int, default=CTRL_TLS_PORT, help="WolfSSL TLS port")
@@ -931,7 +930,6 @@ args = parser.parse_args()
 
 PQC_CA_CERT_PATH = args.pqc_ca_cert
 PQC_CA_KEY_PATH = args.pqc_ca_key
-KME_CA_CERT_PATH = args.kme_ca_cert
 CTRL_TLS_PORT = args.tls_port
 
 
@@ -977,17 +975,10 @@ if DEV_ATTESTATION_RELAYS is not None:
 if os.path.exists(PQC_CA_CERT_PATH) and os.path.exists(PQC_CA_KEY_PATH):
     load_pqc_ca_credentials(PQC_CA_CERT_PATH, PQC_CA_KEY_PATH)
 else:
-    print(f"Error: Relay CA files not found")
+    print(f"Error: CA files not found")
     print(f"  Certificate: {PQC_CA_CERT_PATH}")
     print(f"  Private key: {PQC_CA_KEY_PATH}")
     print(f"\nGenerate with: python generate_pqc_ca.py --output-dir ./pqc_ca")
-    sys.exit(1)
-
-if os.path.exists(KME_CA_CERT_PATH):
-    load_kme_ca_certificate(KME_CA_CERT_PATH)
-else:
-    print(f"Error: KME CA certificate not found: {KME_CA_CERT_PATH}")
-    print(f"\nGenerate with: python generate_pqc_ca.py --output-dir ./kme_ca --cn \"QKD KME CA\"")
     sys.exit(1)
 
 # Generate controller's own TLS certificate

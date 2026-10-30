@@ -28,11 +28,11 @@
  * Both expected and unexpected measured images can generate reports under
  * each device's hardware key. The expected reference meas(rid) is public.
  * Controller accepts only the expected measurement. Hardware keys and the
- * Relay CA are never compromised; attestation is an ideal signing operation.
+ * CA are never compromised; attestation is an ideal signing operation.
  *
  * qkd_k(A,B) is a private, fixed, ordered-pair key source. Its non-disclosure
  * is an ASSUMPTION checked for consistency, not independent KME validation.
- * The KME CA, ETSI key delivery, key consumption, physical attacks and the
+ * KME certificates (same CA, CNs disjoint from relay IDs), ETSI key delivery, key consumption, physical attacks and the
  * computational/quantum security of ML-KEM and ML-DSA remain out of scope.
  *
  * Verification query groups are delimited for verification/run_verification.py.

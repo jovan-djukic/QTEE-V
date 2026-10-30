@@ -12,11 +12,11 @@ for key exchange, ML-DSA-65 for certificate signatures.
                     │                                                     │
     Controller ◄────┼──── WolfSSL TLS 1.3 (ML-KEM-768 KEX, server-only   │
         │           │      auth; relay authenticates via HW attestation) │
-        │           │      Relay CA signs the controller's cert and      │
+        │           │      One CA signs the controller's cert and        │
         │           │      each relay's one identity cert (ML-DSA-65)    │
         ▼           │                                                     │
       R0 ◄───────────┼──── mTLS (ML-KEM-768 + ML-DSA-65, both sides       │
-        │           │      present Relay-CA-signed certs)                │
+        │           │      present certs from the one CA)                │
         ▼           │                                                     │
       R1 ◄───────────┼──── mTLS (same)                                    │
         │           │                                                     │
@@ -28,9 +28,9 @@ for key exchange, ML-DSA-65 for certificate signatures.
         ▼
 ┌───────────────┐
 │      KME       │◄──── mTLS (ML-KEM-768 + ML-DSA-65). A relay presents
-│ (self-hosted)  │      its ONE identity cert (Relay-CA-signed) as its
-└───────────────┘      SAE identity; the KME's own server cert is signed
-                        by a SEPARATE KME CA. See "Two CAs" below.
+│ (self-hosted)  │      its ONE identity cert as its SAE identity; the
+└───────────────┘      KME's own cert is signed by the same CA. See
+                        "One CA, identity by CN" below.
 ```
 
 ---
@@ -40,16 +40,15 @@ for key exchange, ML-DSA-65 for certificate signatures.
 | File | Role |
 |------|------|
 | `wolfssl_mldsa.c` / `.py` | C library (+ ctypes bindings) wrapping WolfSSL for ML-DSA-65 signatures and ML-KEM-768 PQC TLS. Shared by the controller, both relay implementations, and the KME simulator. |
-| `controller.py` | Controller — admits relays on verified attestation, issues ML-DSA-65 X.509 certs (Relay CA) bound to the attested relay ID, distributes topology configuration, hands out the KME CA's public cert. |
+| `controller.py` | Controller — admits relays on verified attestation, issues ML-DSA-65 X.509 certs bound to the attested relay ID, distributes topology configuration, including the CN expected from each KME. |
 | `keystone_attestation.py` | Controller-side Keystone attestation report verifier (Ed25519/SHA3-512 signature chain, pinned measurements, `relay_id:nonce` binding). |
 | `relay.py` | Python relay node — registers with the controller, relays messages hop-by-hop, talks to its neighboring KME(s). |
 | `relay.c` | C relay node — same protocol as the Python relay. Runs natively, or (built with `-DRISC_V_ATTESTATION`) inside a Keystone enclave as R1. |
 | `test_client_pqc.py` | Application endpoint (`APP_L`/`APP_R`) — sends/receives messages through the relay chain. |
-| `generate_pqc_ca.py` | Generates an ML-DSA-65 CA (used twice — once for `pqc_ca/`, once for `kme_ca/`; see below). |
-| `demo/run_demo.py` | Demonstration harness: end-to-end run with R1 in the enclave plus six negative tests, writing logs to `demo/logs/`. See "Demonstration harness" below. |
+| `generate_pqc_ca.py` | Generates the ML-DSA-65 CA (`pqc_ca/`; see below). |
+| `demo/run_demo.py` | Demonstration harness: end-to-end run with R1 in the enclave plus thirteen negative tests, writing logs to `demo/logs/`. See "Demonstration harness" below. |
 | `protocol.pv` | ProVerif formal model of the controller↔relay and relay↔relay protocol. |
-| `pqc_ca/` | The **Relay CA** — signs the controller's cert and every relay's identity cert. |
-| `kme_ca/` | The **KME CA** — signs each KME's own server cert. Independent of `pqc_ca/`. |
+| `pqc_ca/` | The **one CA** — signs the certs of the controller, relays, KMEs and apps. |
 | `external/next-door-key-simulator/` | Self-hosted ETSI 014 KME simulator (fork), replacing qukaydee.com. See its own README for internals. |
 | `external/wolfssl/` | WolfSSL source, built in three variants — see "WolfSSL" under Prerequisites. Plain clone pinned to a known-good commit, not a submodule (no code changes needed, just build flags). |
 | `external/keystone/` | Fork of [keystone-enclave/keystone](https://github.com/keystone-enclave/keystone) (submodule) — builds the RISC-V cross-toolchain and runs `relay.c` inside a Keystone enclave under QEMU. See "RISC-V / Keystone" below. |
@@ -58,27 +57,32 @@ for key exchange, ML-DSA-65 for certificate signatures.
 
 ---
 
-## Two CAs, not one
+## One CA, identity by CN
 
-A relay's identity and a KME's identity are deliberately signed by **two independent
-CAs**, so a compromise of one trust domain can't be used to forge identities in the other:
+A single ML-DSA-65 CA (`pqc_ca/`) signs the certificate of every entity. Being signed by it
+only proves membership, so every connection also checks the peer's **exact certificate CN**:
 
-| CA | Signs | Verifies |
-|----|-------|----------|
-| **Relay CA** (`pqc_ca/`) | The controller's cert, each relay's one identity cert | controller↔relay, relay↔relay, and relay→KME (a KME checks a relay's cert against a copy of this CA) |
-| **KME CA** (`kme_ca/`) | Each KME's own server cert | relay→KME (a relay checks the KME's server cert against this CA) and KME↔KME peer sync |
+| Entity | CN | Issued by |
+|--------|----|-----------|
+| Controller | `QKD Relay Controller` | The controller itself, at startup |
+| Relays | `R0`, `R1`, `R2` | The controller, after attestation (CN must equal the attested relay ID, and only these three IDs can register) |
+| KMEs | `kme-link0-start`, `kme-link0-end`, `kme-link1-start`, `kme-link1-end` | `certs/generate_pqc_certs.py`, on the host |
+| Apps (`APP_L`, `APP_R`) | `test_client` | `test_client_pqc.py --generate-credentials`, on the host |
+
+| Connection | Who checks what |
+|------------|-----------------|
+| Relay → controller | Relay requires CN `QKD Relay Controller` |
+| Relay ↔ relay | Sender requires the configured next hop; receiver applies the neighbour whitelist |
+| App ↔ edge relay | App requires `--expect-peer`; relay applies the whitelist |
+| Relay → KME `/api/v1/keys/...` | KME requires CN = its `ATTACHED_SAE_ID`; relay requires the KME CN from its configuration |
+| KME ↔ KME `/api/v1/kme/...` | KME requires a CN in `OTHER_KME_CNS`, on both sides. Relays and apps get 401 |
 
 A relay does **not** have a separate "KME-facing" certificate — it presents the same
-ML-DSA-65 identity cert everywhere. The KME CA's private key never leaves the host where
-`certs/generate_pqc_certs.py` is run; the controller and relays never touch it, only its
-public certificate (delivered to relays via the `configuration` response's
-`kme_ca_certificate` field). Conversely, the KME containers never see the Relay CA's
-private key, only a bind-mounted copy of its public certificate.
+ML-DSA-65 identity cert everywhere.
 
-Because a KME's proxy must accept both a relay (Relay-CA-signed) calling its SAE-facing
-endpoints and a peer KME (KME-CA-signed) calling its internal sync endpoints, it defers
-certificate verification until it has read the HTTP request and knows which single CA
-applies to that path — see `external/next-door-key-simulator/pqc_tls_proxy.py`.
+**One CA is one point of failure.** Whoever holds the CA private key can mint any identity,
+including a KME's. That includes the controller host, which needs the key to issue relay
+certs: a compromised controller can read keys from every KME.
 
 ---
 
@@ -177,14 +181,13 @@ gcc -o relay relay.c \
     -lwolfssl -lm -lpthread
 ```
 
-### 3. Generate the two CAs (one time)
+### 3. Generate the CA (one time)
 
 ```bash
 python generate_pqc_ca.py --output-dir ./pqc_ca --cn "QKD Relay PQC CA"
-python generate_pqc_ca.py --output-dir ./kme_ca --cn "QKD KME CA"
 ```
 
-The C relay has the Relay CA certificate hardcoded at compile time — if you regenerate
+The C relay has the CA certificate hardcoded at compile time — if you regenerate
 `pqc_ca/`, update the `PQC_CA_CERTIFICATE` string in `relay.c` and recompile.
 
 ### 4. Start the KME simulator
@@ -205,7 +208,6 @@ commands above (including `--build`) whenever certs change. See
 LD_LIBRARY_PATH=external/wolfssl/_install_linux_shared/lib \
 python controller.py \
     --pqc-ca-cert ./pqc_ca/ca_certificate.pem --pqc-ca-key ./pqc_ca/ca_private_key.pem \
-    --kme-ca-cert ./kme_ca/ca_certificate.pem \
     --insecure-dev-attestation          # native-only runs; see below
 ```
 
@@ -263,18 +265,18 @@ LD_LIBRARY_PATH=external/wolfssl/_install_linux_shared/lib \
 ./relay R1 9001            # node ID and listen port
 ```
 
-Each relay, on connecting: verifies the controller's cert against the pre-deployed Relay
+Each relay, on connecting: verifies the controller's cert against the pre-deployed
 CA → registers → receives a nonce → sends an attestation report (inside a Keystone enclave:
 a Security-Monitor-signed report binding `relay_id:nonce` and the enclave measurement;
 natively: the SHA256 dev stand-in, accepted only under `--insecure-dev-attestation`) →
-receives topology + the KME CA cert →
+receives topology + the expected KME CNs →
 generates an ML-DSA-65 keypair and receives its signed identity cert → enters the relay
 loop, accepting mTLS from its configured neighbors and calling its neighboring KME(s) for
 key material using that same identity cert.
 
 Mixed deployments work fine — e.g. R0 and R2 as Python (`python relay.py 0 2`), R1 as the
 C binary (`./relay R1 9001`); the wire protocol is identical either way. Tested and
-confirmed working. The C relay's Relay CA is hardcoded at compile time (step 2's note) —
+confirmed working. The C relay's CA is hardcoded at compile time (step 2's note) —
 this is the single most common reason a freshly-built `relay` fails handshake against a
 controller that's using a *different* `pqc_ca/` than the one baked into the binary.
 
@@ -377,7 +379,6 @@ On the host (KME simulator already up):
 
 ```bash
 python controller.py --pqc-ca-cert ./pqc_ca/ca_certificate.pem --pqc-ca-key ./pqc_ca/ca_private_key.pem \
-    --kme-ca-cert ./kme_ca/ca_certificate.pem \
     --enclave-measurement <hex from --measure> --insecure-dev-attestation R0,R2
 python relay.py 0 2
 ```
@@ -416,9 +417,14 @@ running) and the KME simulator (started if not running), and writes timestamped 
 | `test3_kme_no_relay_cert.log` | KME `enc_keys` request without a certificate, and with a rogue-CA one: refused |
 | `test4_replay.log` | R1's genuine report from the demo run replayed in a new session: rejected (stale nonce) |
 | `test5_modified_enclave.log` | enclave image with one byte changed runs as R1: measurement mismatch, refused |
-| `test6_cn_mismatch.log` | dev-admitted R0 asks for a CN=R1 certificate: refused (CN=R0 control: issued; a second certificate in the same session: refused) |
-| `test7_wrong_next_hop.log` | impostor with a genuine Relay-CA certificate for CN=R0 takes APP_R's port: R2 refuses to forward, the impostor receives nothing |
-| `test8_fake_controller.log` | impostor with a genuine Relay-CA certificate for CN=R1 poses as the controller: R1 (enclave) refuses to register |
+| `test6_cn_mismatch.log` | dev-admitted R0 asks for a CN=R1 certificate: refused (CN=R0 control: issued; a second certificate in the same session: refused). Registering as `kme-link0-end`: refused |
+| `test7_wrong_next_hop.log` | impostor with a genuine CA-signed certificate for CN=R0 takes APP_R's port: R2 refuses to forward, the impostor receives nothing |
+| `test8_fake_controller.log` | impostor with a genuine CA-signed certificate for CN=R1 poses as the controller: R1 (enclave) refuses to register |
+| `test9_kme_api.log` | relay, app and other-link KME certs, an encoded path and a forged `X-Peer-CN` on a KME's KME-to-KME API: 401 (peer KME control: 200) |
+| `test10_sae_api.log` | peer KME, app and wrong-relay certs on a KME's SAE API: 401 (attached relay control: 200) |
+| `test11_fake_kme.log` | impostor with a genuine CA-signed certificate for CN=R1 takes a KME's port: R0 refuses it and drops the message |
+| `test12_whitelist_exact.log` | genuine certificates whose CN is only part of R1's whitelist string (`R`, `R0\|R2`, `\|`): rejected |
+| `test13_no_decryption_key.log` | a hop naming a `key_ID` the KME doesn't have: R1 drops the message |
 | `summary.txt` | expected vs. observed for each |
 
 ```bash
@@ -437,7 +443,7 @@ enclave's lines with everyone else's (R1's own clock counts from guest boot).
 | Layer | Algorithm | Purpose |
 |-------|-----------|---------|
 | TLS 1.3 key exchange | ML-KEM-768 (strict — no classical fallback) | Session key establishment, everywhere in the system |
-| Certificate signatures | ML-DSA-65 | Identity: controller, relays, KMEs |
+| Certificate signatures | ML-DSA-65 | Identity: controller, relays, KMEs, apps |
 | Relayed-message encryption | AES (keyed by the QKD-derived key from the KME) | The actual hop-to-hop payload, inside the mTLS tunnel |
 | Enclave attestation | Ed25519 with SHA3-512 (Keystone's variant, not RFC 8032) | Device root key endorses the Security Monitor; the SM signs the enclave measurement and `relay_id:nonce` |
 
@@ -494,7 +500,7 @@ Full inputs, logs, tool version and hashes are in `verification/results/`.
 
 The mTLS exchange is an explicit symbolic abstraction of peer possession and
 transcript binding, not a verification of the complete TLS 1.3 implementation.
-Private QKD key provisioning, uncompromised hardware keys and the Relay CA remain
+Private QKD key provisioning, uncompromised hardware keys and the CA remain
 assumptions. The model requires exact intended controller/destination identity
 checks; the relays enforce them at runtime (controller certificate CN must be
 `QKD Relay Controller`, next hop's CN must be the configured neighbour; see harness
@@ -508,7 +514,7 @@ assumptions, implementation mapping and reproduction instructions.
 
 ## Troubleshooting
 
-**"Relay CA files not found" / "KME CA certificate not found"** — generate them (step 3
+**"CA files not found"** — generate them (step 3
 above); the controller fails fast if either is missing.
 
 **Relays stall after "Requesting configuration..." / controller logs `Waiting... RELAYS = [...]`**
@@ -517,15 +523,15 @@ and waits indefinitely until then; the `RELAYS` list shows which are still missi
 sure all three are started and admitted.
 
 **A relay's KME calls fail / cert rejected** — the KME containers' certs (their own
-KME-CA-signed cert plus a copy of the Relay CA, `RELAY_CA_FILE`) are baked into the image
-at build time, not bind-mounted. If either CA was regenerated, re-run
+cert plus a copy of the CA's, `CA_FILE`) are baked into the image
+at build time, not bind-mounted. If the CA was regenerated, re-run
 `certs/generate_pqc_certs.py` and then `docker compose up -d --build` — a plain `up -d`
 will keep serving the stale certs baked into the existing image. Also check
 `LD_LIBRARY_PATH` inside the containers points at the mounted WolfSSL lib — see
 `external/next-door-key-simulator/docker-compose.yml`.
 
 **"Peer certificate signature verification failed" anywhere** — almost always a stale cert
-signed by a CA that's since been regenerated (`pqc_ca/` or `kme_ca/`). Everything that
+signed by a CA that's since been regenerated (`pqc_ca/`). Everything that
 holds a cert signed by the old CA needs reissuing: `test_client_creds/` (delete and
 re-run `python test_client_pqc.py --generate-credentials`), `relay.c`'s hardcoded
 `PQC_CA_CERTIFICATE` (regenerate the string from the current `pqc_ca/ca_certificate.pem`
