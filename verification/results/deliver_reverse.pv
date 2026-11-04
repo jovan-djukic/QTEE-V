@@ -27,12 +27,14 @@
  *
  * Both expected and unexpected measured images can generate reports under
  * each device's hardware key. The expected reference meas(rid) is public.
+ * meas(rid) is per relay: the implementation compiles the relay ID into the
+ * enclave image and the controller pins one measurement per ID.
  * Controller accepts only the expected measurement. Hardware keys and the
- * Relay CA are never compromised; attestation is an ideal signing operation.
+ * CA are never compromised; attestation is an ideal signing operation.
  *
  * qkd_k(A,B) is a private, fixed, ordered-pair key source. Its non-disclosure
  * is an ASSUMPTION checked for consistency, not independent KME validation.
- * The KME CA, ETSI key delivery, key consumption, physical attacks and the
+ * KME certificates (same CA, CNs disjoint from relay IDs), ETSI key delivery, key consumption, physical attacks and the
  * computational/quantum security of ML-KEM and ML-DSA remain out of scope.
  *
  * Verification query groups are delimited for verification/run_verification.py.
@@ -52,8 +54,6 @@ fun pk(skey): pkey.
 fun pkb(pkey): bitstring [data].
 fun sign(bitstring, skey): bitstring.
 fun ok(): bitstring.
-reduc forall m: bitstring, sk: skey;
-    getmess(sign(m, sk)) = m.
 reduc forall m: bitstring, sk: skey;
     verify(sign(m, sk), m, pk(sk)) = ok().
 

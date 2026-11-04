@@ -13,6 +13,11 @@
  *   export LD_LIBRARY_PATH=external/wolfssl/_install_linux_shared/lib
  *   ./relay R1 9001
  *
+ * The Keystone enclave build (-DRISC_V_ATTESTATION) takes no arguments: Eyrie
+ * starts the eapp with argc = 0, and the ID must be part of the measured image
+ * anyway, so it is compiled in with -DRELAY_ID="R1" -DRELAY_PORT=9001 (see
+ * external/keystone/examples/relay/CMakeLists.txt).
+ *
  * ============================================================================
  */
 
@@ -187,6 +192,14 @@ const char *PQC_CA_CERTIFICATE =
 
 #ifdef RISC_V_ATTESTATION
 const char *CONTROLLER_HOST = "192.168.100.2";
+
+#if !defined(RELAY_ID) || !defined(RELAY_PORT)
+#error "enclave build needs -DRELAY_ID=\"<id>\" and -DRELAY_PORT=<port>"
+#endif
+/* The ID is compiled in so the enclave measurement covers it: the untrusted
+ * host can't make this image attest as another relay. The "relay_id=" prefix
+ * marks it in the binary (strings, and the harness's relabel test). */
+static const char enclave_identity[] = "relay_id=" RELAY_ID;
 #else
 const char *CONTROLLER_HOST = "127.0.0.1";
 #endif
@@ -2100,6 +2113,11 @@ void free_config(relay_config_t *c) {
 /* ==================== Main ==================== */
 
 int main(int argc, char *argv[]) {
+#ifdef RISC_V_ATTESTATION
+    (void)argc; (void)argv;
+    const char *relay_id = enclave_identity + strlen("relay_id=");
+    int port = RELAY_PORT;
+#else
     char *relay_id = "R1";
     int port = 9001;
 
@@ -2107,6 +2125,7 @@ int main(int argc, char *argv[]) {
         relay_id = argv[1];
         port = atoi(argv[2]);
     }
+#endif
 
     char ts[32];
     fprintf(stderr, "========================================\n");

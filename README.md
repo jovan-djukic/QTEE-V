@@ -46,7 +46,7 @@ for key exchange, ML-DSA-65 for certificate signatures.
 | `relay.c` | C relay node — same protocol as the Python relay. Runs natively, or (built with `-DRISC_V_ATTESTATION`) inside a Keystone enclave as R1. |
 | `test_client_pqc.py` | Application endpoint (`APP_L`/`APP_R`) — sends/receives messages through the relay chain. |
 | `generate_pqc_ca.py` | Generates the ML-DSA-65 CA (`pqc_ca/`; see below). |
-| `demo/run_demo.py` | Demonstration harness: end-to-end run with R1 in the enclave plus thirteen negative tests, writing logs to `demo/logs/`. See "Demonstration harness" below. |
+| `demo/run_demo.py` | Demonstration harness: end-to-end run with R1 in the enclave plus fourteen negative tests, writing logs to `demo/logs/`. See "Demonstration harness" below. |
 | `protocol.pv` | ProVerif formal model of the controller↔relay and relay↔relay protocol. |
 | `pqc_ca/` | The **one CA** — signs the certs of the controller, relays, KMEs and apps. |
 | `external/next-door-key-simulator/` | Self-hosted ETSI 014 KME simulator (fork), replacing qukaydee.com. See its own README for internals. |
@@ -219,7 +219,7 @@ from the relay. Flags:
 
 | Flag | Meaning |
 |------|---------|
-| `--enclave-measurement HEX` | SHA3-512 of the release enclave (see "RISC-V / Keystone"). Without it no enclave relay is admitted. |
+| `--enclave-measurement ID=HEX` | SHA3-512 of relay ID's release enclave, e.g. `R1=<hex>` (see "RISC-V / Keystone"). Repeat for each enclave relay; a relay without one isn't admitted as an enclave relay. Two IDs can't share a measurement. |
 | `--sm-measurement HEX` | Optionally also pin the Security Monitor hash. |
 | `--attestation-root-key HEX` | Ed25519 device root key. Defaults to Keystone's public **test** key, which is only meaningful under QEMU. |
 | `--attestation-evidence-dir DIR` | Keep every received attestation report and its verdict as JSON (audit trail; used by the replay test). |
@@ -230,7 +230,7 @@ an admitted relay can't obtain another relay's identity.
 
 Native (non-enclave) relays are refused unless `--insecure-dev-attestation` covers them, so
 the all-native deployments below need the flag. For R1 in an enclave with R0/R2 native, use
-`--enclave-measurement <hex> --insecure-dev-attestation R0,R2`.
+`--enclave-measurement R1=<hex> --insecure-dev-attestation R0,R2`.
 
 Opens two ports:
 
@@ -331,7 +331,11 @@ that runs `relay.c` as R1 inside a Keystone enclave under QEMU. Changes in the f
   R0/R2, KMEs) goes through the QEMU gateway `192.168.100.2`, which is the host.
 - `runtime/include/mm/vm_defs.h` — larger Eyrie stack (`0x80000`) for WolfSSL's ML-DSA-65/ML-KEM.
 - `examples/relay/` — builds this repo's own `relay.c` (no copy) with `-DRISC_V_ATTESTATION`
-  against `external/wolfssl/_install_riscv`. The project root comes from
+  against `external/wolfssl/_install_riscv`, as one eapp per relay ID in
+  `QTEE_ENCLAVE_RELAY_IDS` (default `R1`). Each eapp, `relay-<ID>`, has its ID and port compiled
+  in (`-DRELAY_ID`, `-DRELAY_PORT`): Eyrie gives the eapp no arguments, and a compiled-in ID is
+  covered by the measurement, so the untrusted host can't make an image attest as another
+  relay. `relay.ke` holds the eapps and starts `relay-R1`. The project root comes from
   `overlays/keystone/package/keystone-examples/keystone-examples.mk` (`QTEE_ROOT`). The host
   runner has a `--measure` mode that prints the enclave measurement.
 
@@ -372,24 +376,26 @@ In the guest, get the measurement to pin. It is computed from the binaries by
 ```sh
 modprobe keystone-driver
 /usr/share/keystone/examples/relay.ke --noexec --target /tmp/relay
-cd /tmp/relay && ./relay-runner relay eyrie-rt loader.bin --measure
+cd /tmp/relay && ./relay-runner relay-R1 eyrie-rt loader.bin --measure
 ```
 
 On the host (KME simulator already up):
 
 ```bash
 python controller.py --pqc-ca-cert ./pqc_ca/ca_certificate.pem --pqc-ca-key ./pqc_ca/ca_private_key.pem \
-    --enclave-measurement <hex from --measure> --insecure-dev-attestation R0,R2
+    --enclave-measurement R1=<hex from --measure> --insecure-dev-attestation R0,R2
 python relay.py 0 2
 ```
 
-In the guest: `cd /tmp/relay && ./relay-runner relay eyrie-rt loader.bin` (or run
-`/usr/share/keystone/examples/relay.ke`). It defaults to `R1 9001`. Then run steps 7–8 above.
+In the guest: `cd /tmp/relay && ./relay-runner relay-R1 eyrie-rt loader.bin` (or run
+`/usr/share/keystone/examples/relay.ke`). It runs as R1 on port 9001, both compiled in. Then
+run steps 7–8 above.
 The controller logs `[R1] Keystone report verified: enclave=<hex>...` and
 `Authenticated (platform=riscv)`.
 
 An enclave built from modified source produces a different measurement and is refused with
-`enclave measurement mismatch`. A native relay presenting as R1 is refused because
+`enclave measurement mismatch`. R1's image with its compiled-in ID changed attests as that
+other ID, and is refused unless a measurement is pinned for it, which it wouldn't match. A native relay presenting as R1 is refused because
 `--insecure-dev-attestation` doesn't cover it.
 
 QEMU's root key is Keystone's public test key, so under QEMU this demonstrates the
@@ -425,6 +431,7 @@ running) and the KME simulator (started if not running), and writes timestamped 
 | `test11_fake_kme.log` | impostor with a genuine CA-signed certificate for CN=R1 takes a KME's port: R0 refuses it and drops the message |
 | `test12_whitelist_exact.log` | genuine certificates whose CN is only part of R1's whitelist string (`R`, `R0\|R2`, `\|`): rejected |
 | `test13_no_decryption_key.log` | a hop naming a `key_ID` the KME doesn't have: R1 drops the message |
+| `test14_relabelled_enclave.log` | R1's enclave image with its compiled-in ID changed to R0: no measurement pinned for R0, refused |
 | `summary.txt` | expected vs. observed for each |
 
 ```bash

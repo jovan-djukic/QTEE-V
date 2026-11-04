@@ -1079,12 +1079,12 @@ Translating the process into Horn clauses...
 Completing...
 200 rules inserted. Base: 200 rules (48 with conclusion selected). Queue: 274 rules.
 400 rules inserted. Base: 398 rules (55 with conclusion selected). Queue: 236 rules.
-600 rules inserted. Base: 594 rules (63 with conclusion selected). Queue: 67 rules.
+600 rules inserted. Base: 594 rules (63 with conclusion selected). Queue: 66 rules.
 800 rules inserted. Base: 727 rules (77 with conclusion selected). Queue: 33 rules.
-1000 rules inserted. Base: 824 rules (100 with conclusion selected). Queue: 13 rules.
-1200 rules inserted. Base: 983 rules (120 with conclusion selected). Queue: 16 rules.
-1400 rules inserted. Base: 1043 rules (134 with conclusion selected). Queue: 4 rules.
-1600 rules inserted. Base: 1116 rules (154 with conclusion selected). Queue: 5 rules.
+1000 rules inserted. Base: 823 rules (100 with conclusion selected). Queue: 13 rules.
+1200 rules inserted. Base: 983 rules (121 with conclusion selected). Queue: 16 rules.
+1400 rules inserted. Base: 1040 rules (132 with conclusion selected). Queue: 4 rules.
+1600 rules inserted. Base: 1104 rules (154 with conclusion selected). Queue: 4 rules.
 Starting query not event(RelayGotHop(secret_msg_reverse[],R2,R1))
 goal reachable: b-event(@p_act(@occ190_1,senc((tag_nonce[],n_7),k_11))) && b-event(@p_act(@occ122_1,senc((tag_nonce[],n_8),k_12))) -> event(RelayGotHop(secret_msg_reverse[],R2,R1))
 Abbreviations:

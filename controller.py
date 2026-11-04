@@ -19,8 +19,10 @@ Bootstrap order:
 
 Attestation:
   A relay is admitted only on a Keystone attestation report that chains to
-  the pinned root key, carries the pinned enclave measurement, and binds
-  "<relay_id>:<nonce_hex>" (see keystone_attestation.py). The SHA256
+  the pinned root key, carries the measurement pinned for that relay_id,
+  and binds "<relay_id>:<nonce_hex>" (see keystone_attestation.py). Each
+  enclave image has its relay ID compiled in, so its measurement identifies
+  the relay. The SHA256
   stand-in report of non-enclave relays (relay.py, native relay.c) is
   refused unless --insecure-dev-attestation names that relay. The relay's
   platform is inferred from which kind of report verified, never taken
@@ -39,7 +41,7 @@ Usage:
 
   # Run controller:
   python controller.py --pqc-ca-cert ./pqc_ca/ca_certificate.pem --pqc-ca-key ./pqc_ca/ca_private_key.pem \
-      --enclave-measurement <hex>                # admit enclave relays
+      --enclave-measurement R1=<hex>             # admit enclave relay R1 (repeatable)
       [--insecure-dev-attestation R0,R2]         # also admit these non-enclave relays (dev only)
 """
 
@@ -87,9 +89,11 @@ CTRL_PRIVATE_KEY: Optional[bytes] = None
 CTRL_CERTIFICATE: Optional[str] = None   # PEM string
 
 # Attestation policy (set from the command line, see Main)
-# SHA3-512 measurement of the release relay enclave (loader + eyrie-rt +
-# relay eapp). None => no enclave relay can be admitted.
-ENCLAVE_MEASUREMENT: Optional[bytes] = None
+# SHA3-512 measurement of each relay's release enclave (loader + eyrie-rt +
+# relay-<ID> eapp), by relay_id. The ID is compiled into the eapp, so each
+# relay has its own image. A relay_id with no entry can't be admitted as an
+# enclave relay.
+ENCLAVE_MEASUREMENTS: Dict[str, bytes] = {}
 # SHA3-512 of the Security Monitor image. None => SM hash not pinned (the
 # SM is still authenticated through the root-key signature).
 SM_MEASUREMENT: Optional[bytes] = None
@@ -498,8 +502,9 @@ LINKS = [
 # The only IDs a relay can register as. A relay's certificate CN is its
 # relay_id and all entities share one CA, so an unchecked ID could yield a
 # certificate for another entity (e.g. CN=kme-link0-end, which KMEs accept on
-# their KME-to-KME endpoints). The enclave measurement doesn't cover the ID, so
-# genuine attestation doesn't prevent this.
+# their KME-to-KME endpoints). An enclave relay's ID is covered by its pinned
+# measurement, but a dev-attested relay's isn't, and this also keeps
+# --enclave-measurement to relay IDs.
 ALLOWED_RELAY_IDS = ("R0", "R1", "R2")
 
 
@@ -559,9 +564,9 @@ def verify_attestation(relay_id: str, nonce: bytes, report: str) -> str:
             raise AttestationError("dev stand-in report mismatch")
         return "native"
 
-    if ENCLAVE_MEASUREMENT is None:
-        raise AttestationError(
-            "no --enclave-measurement pinned; enclave relays cannot be admitted")
+    expected_measurement = ENCLAVE_MEASUREMENTS.get(relay_id)
+    if expected_measurement is None:
+        raise AttestationError(f"no enclave measurement pinned for {relay_id}")
     try:
         raw = base64.b64decode(report, validate=True)
     except (binascii.Error, ValueError):
@@ -572,7 +577,7 @@ def verify_attestation(relay_id: str, nonce: bytes, report: str) -> str:
     r = keystone_attestation.verify_report(
         raw,
         dev_public_key=ATTESTATION_ROOT_KEY,
-        expected_enclave_hash=ENCLAVE_MEASUREMENT,
+        expected_enclave_hash=expected_measurement,
         expected_sm_hash=SM_MEASUREMENT,
         expected_data=expected_data,
     )
@@ -911,9 +916,10 @@ parser.add_argument("--pqc-ca-key", default=PQC_CA_KEY_PATH, help="Path to the C
 parser.add_argument("--host", default="0.0.0.0", help="Host to bind to")
 parser.add_argument("--port", type=int, default=8000, help="HTTP port (for /ca_cert bootstrap)")
 parser.add_argument("--tls-port", type=int, default=CTRL_TLS_PORT, help="WolfSSL TLS port")
-parser.add_argument("--enclave-measurement", default=None, metavar="HEX",
-                    help="SHA3-512 measurement (128 hex chars) of the release relay enclave; "
-                         "required to admit any enclave relay")
+parser.add_argument("--enclave-measurement", action="append", default=[], metavar="ID=HEX",
+                    help="SHA3-512 measurement (128 hex chars) of relay ID's release enclave, "
+                         "e.g. R1=<hex>; repeat for each enclave relay. A relay with no "
+                         "measurement can't be admitted as an enclave relay")
 parser.add_argument("--sm-measurement", default=None, metavar="HEX",
                     help="SHA3-512 measurement of the Keystone Security Monitor (optional pin)")
 parser.add_argument("--attestation-root-key", default=None, metavar="HEX",
@@ -944,9 +950,24 @@ def _hex_arg(value: str, length: int, name: str) -> bytes:
     return b
 
 
-if args.enclave_measurement:
-    ENCLAVE_MEASUREMENT = _hex_arg(args.enclave_measurement, keystone_attestation.MDSIZE,
-                                   "--enclave-measurement")
+for pin in args.enclave_measurement:
+    pin_id, sep, pin_hex = pin.partition("=")
+    if not sep:
+        print(f"Error: --enclave-measurement takes ID=HEX (e.g. R1=<hex>), got {pin!r}")
+        sys.exit(1)
+    if pin_id not in ALLOWED_RELAY_IDS:
+        print(f"Error: --enclave-measurement: {pin_id!r} is not one of {', '.join(ALLOWED_RELAY_IDS)}")
+        sys.exit(1)
+    if pin_id in ENCLAVE_MEASUREMENTS:
+        print(f"Error: --enclave-measurement given twice for {pin_id}")
+        sys.exit(1)
+    ENCLAVE_MEASUREMENTS[pin_id] = _hex_arg(pin_hex, keystone_attestation.MDSIZE,
+                                            f"--enclave-measurement {pin_id}")
+# Each image has its own ID compiled in, so a shared measurement means an image
+# that could attest as more than one relay.
+if len(set(ENCLAVE_MEASUREMENTS.values())) != len(ENCLAVE_MEASUREMENTS):
+    print("Error: two relay IDs share an enclave measurement; each relay needs its own image")
+    sys.exit(1)
 if args.sm_measurement:
     SM_MEASUREMENT = _hex_arg(args.sm_measurement, keystone_attestation.MDSIZE, "--sm-measurement")
 if args.attestation_root_key:
@@ -960,10 +981,10 @@ if args.attestation_evidence_dir:
     ATTESTATION_EVIDENCE_DIR = args.attestation_evidence_dir
     os.makedirs(ATTESTATION_EVIDENCE_DIR, exist_ok=True)
 
-if ENCLAVE_MEASUREMENT is None:
+if not ENCLAVE_MEASUREMENTS:
     print("[!] No --enclave-measurement: enclave relays will be refused")
-else:
-    print(f"[*] Pinned enclave measurement: {ENCLAVE_MEASUREMENT.hex()}")
+for pin_id, pin in ENCLAVE_MEASUREMENTS.items():
+    print(f"[*] Pinned enclave measurement for {pin_id}: {pin.hex()}")
 if ATTESTATION_ROOT_KEY == keystone_attestation.KEYSTONE_TEST_DEV_PUBLIC_KEY:
     print("[!] Attestation root key is Keystone's public TEST key -- "
           "reports prove nothing outside QEMU")

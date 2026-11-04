@@ -31,7 +31,8 @@ summary with that run's selected group; use `--group all` for the complete artif
 - The controller's certificate/key are generated once, matching its persistent
   runtime identity. Setup inputs retain public-network adversary control.
 - Setup and hop records have distinct tags. Public CA and hardware verification
-  keys are published. Reference measurements are public.
+  keys are published. Reference measurements are public, one per relay ID
+  (`meas(rid)`), as the implementation compiles the ID into each enclave image.
 - Signatures have a `getmess` reduction: signatures do not confer confidentiality.
 - A symbolic client-possession exchange signs a transcript containing sender,
   destination, encrypted key transport and fresh receiver challenge. The symmetric

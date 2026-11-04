@@ -1078,84 +1078,84 @@ Process 0 (that is, the initial process):
 Translating the process into Horn clauses...
 Completing...
 200 rules inserted. Base: 200 rules (48 with conclusion selected). Queue: 239 rules.
-400 rules inserted. Base: 397 rules (57 with conclusion selected). Queue: 173 rules.
-600 rules inserted. Base: 578 rules (66 with conclusion selected). Queue: 49 rules.
-800 rules inserted. Base: 704 rules (80 with conclusion selected). Queue: 25 rules.
-1000 rules inserted. Base: 787 rules (104 with conclusion selected). Queue: 20 rules.
-1200 rules inserted. Base: 937 rules (127 with conclusion selected). Queue: 9 rules.
-1400 rules inserted. Base: 1003 rules (150 with conclusion selected). Queue: 4 rules.
+400 rules inserted. Base: 397 rules (57 with conclusion selected). Queue: 172 rules.
+600 rules inserted. Base: 578 rules (67 with conclusion selected). Queue: 52 rules.
+800 rules inserted. Base: 704 rules (80 with conclusion selected). Queue: 24 rules.
+1000 rules inserted. Base: 787 rules (105 with conclusion selected). Queue: 20 rules.
+1200 rules inserted. Base: 937 rules (126 with conclusion selected). Queue: 9 rules.
+1400 rules inserted. Base: 997 rules (145 with conclusion selected). Queue: 6 rules.
 Starting query not attacker(secret_msg[])
 RESULT not attacker(secret_msg[]) is true.
 -- Query not attacker(secret_msg_reverse[]) in process 1.
 Translating the process into Horn clauses...
 Completing...
 200 rules inserted. Base: 200 rules (48 with conclusion selected). Queue: 239 rules.
-400 rules inserted. Base: 397 rules (57 with conclusion selected). Queue: 173 rules.
-600 rules inserted. Base: 578 rules (66 with conclusion selected). Queue: 49 rules.
-800 rules inserted. Base: 704 rules (80 with conclusion selected). Queue: 25 rules.
-1000 rules inserted. Base: 787 rules (104 with conclusion selected). Queue: 20 rules.
-1200 rules inserted. Base: 937 rules (127 with conclusion selected). Queue: 9 rules.
-1400 rules inserted. Base: 1003 rules (150 with conclusion selected). Queue: 4 rules.
+400 rules inserted. Base: 397 rules (57 with conclusion selected). Queue: 172 rules.
+600 rules inserted. Base: 578 rules (67 with conclusion selected). Queue: 52 rules.
+800 rules inserted. Base: 704 rules (80 with conclusion selected). Queue: 24 rules.
+1000 rules inserted. Base: 787 rules (105 with conclusion selected). Queue: 20 rules.
+1200 rules inserted. Base: 937 rules (126 with conclusion selected). Queue: 9 rules.
+1400 rules inserted. Base: 997 rules (145 with conclusion selected). Queue: 6 rules.
 Starting query not attacker(secret_msg_reverse[])
 RESULT not attacker(secret_msg_reverse[]) is true.
 -- Query not attacker(qkd_k(R0,R1)) in process 1.
 Translating the process into Horn clauses...
 Completing...
 200 rules inserted. Base: 200 rules (48 with conclusion selected). Queue: 239 rules.
-400 rules inserted. Base: 397 rules (57 with conclusion selected). Queue: 173 rules.
-600 rules inserted. Base: 578 rules (66 with conclusion selected). Queue: 49 rules.
-800 rules inserted. Base: 704 rules (80 with conclusion selected). Queue: 25 rules.
-1000 rules inserted. Base: 787 rules (104 with conclusion selected). Queue: 20 rules.
-1200 rules inserted. Base: 937 rules (127 with conclusion selected). Queue: 9 rules.
-1400 rules inserted. Base: 1003 rules (150 with conclusion selected). Queue: 4 rules.
+400 rules inserted. Base: 397 rules (57 with conclusion selected). Queue: 172 rules.
+600 rules inserted. Base: 578 rules (67 with conclusion selected). Queue: 52 rules.
+800 rules inserted. Base: 704 rules (80 with conclusion selected). Queue: 24 rules.
+1000 rules inserted. Base: 787 rules (105 with conclusion selected). Queue: 20 rules.
+1200 rules inserted. Base: 937 rules (126 with conclusion selected). Queue: 9 rules.
+1400 rules inserted. Base: 997 rules (145 with conclusion selected). Queue: 6 rules.
 Starting query not attacker(qkd_k(R0,R1))
 RESULT not attacker(qkd_k(R0,R1)) is true.
 -- Query not attacker(qkd_k(R1,R2)) in process 1.
 Translating the process into Horn clauses...
 Completing...
 200 rules inserted. Base: 200 rules (48 with conclusion selected). Queue: 239 rules.
-400 rules inserted. Base: 397 rules (57 with conclusion selected). Queue: 173 rules.
-600 rules inserted. Base: 578 rules (66 with conclusion selected). Queue: 49 rules.
-800 rules inserted. Base: 704 rules (80 with conclusion selected). Queue: 25 rules.
-1000 rules inserted. Base: 787 rules (104 with conclusion selected). Queue: 20 rules.
-1200 rules inserted. Base: 937 rules (127 with conclusion selected). Queue: 9 rules.
-1400 rules inserted. Base: 1003 rules (150 with conclusion selected). Queue: 4 rules.
+400 rules inserted. Base: 397 rules (57 with conclusion selected). Queue: 172 rules.
+600 rules inserted. Base: 578 rules (67 with conclusion selected). Queue: 52 rules.
+800 rules inserted. Base: 704 rules (80 with conclusion selected). Queue: 24 rules.
+1000 rules inserted. Base: 787 rules (105 with conclusion selected). Queue: 20 rules.
+1200 rules inserted. Base: 937 rules (126 with conclusion selected). Queue: 9 rules.
+1400 rules inserted. Base: 997 rules (145 with conclusion selected). Queue: 6 rules.
 Starting query not attacker(qkd_k(R1,R2))
 RESULT not attacker(qkd_k(R1,R2)) is true.
 -- Query not attacker(qkd_k(R1,R0)) in process 1.
 Translating the process into Horn clauses...
 Completing...
 200 rules inserted. Base: 200 rules (48 with conclusion selected). Queue: 239 rules.
-400 rules inserted. Base: 397 rules (57 with conclusion selected). Queue: 173 rules.
-600 rules inserted. Base: 578 rules (66 with conclusion selected). Queue: 49 rules.
-800 rules inserted. Base: 704 rules (80 with conclusion selected). Queue: 25 rules.
-1000 rules inserted. Base: 787 rules (104 with conclusion selected). Queue: 20 rules.
-1200 rules inserted. Base: 937 rules (127 with conclusion selected). Queue: 9 rules.
-1400 rules inserted. Base: 1003 rules (150 with conclusion selected). Queue: 4 rules.
+400 rules inserted. Base: 397 rules (57 with conclusion selected). Queue: 172 rules.
+600 rules inserted. Base: 578 rules (67 with conclusion selected). Queue: 52 rules.
+800 rules inserted. Base: 704 rules (80 with conclusion selected). Queue: 24 rules.
+1000 rules inserted. Base: 787 rules (105 with conclusion selected). Queue: 20 rules.
+1200 rules inserted. Base: 937 rules (126 with conclusion selected). Queue: 9 rules.
+1400 rules inserted. Base: 997 rules (145 with conclusion selected). Queue: 6 rules.
 Starting query not attacker(qkd_k(R1,R0))
 RESULT not attacker(qkd_k(R1,R0)) is true.
 -- Query not attacker(qkd_k(R2,R1)) in process 1.
 Translating the process into Horn clauses...
 Completing...
 200 rules inserted. Base: 200 rules (48 with conclusion selected). Queue: 239 rules.
-400 rules inserted. Base: 397 rules (57 with conclusion selected). Queue: 173 rules.
-600 rules inserted. Base: 578 rules (66 with conclusion selected). Queue: 49 rules.
-800 rules inserted. Base: 704 rules (80 with conclusion selected). Queue: 25 rules.
-1000 rules inserted. Base: 787 rules (104 with conclusion selected). Queue: 20 rules.
-1200 rules inserted. Base: 937 rules (127 with conclusion selected). Queue: 9 rules.
-1400 rules inserted. Base: 1003 rules (150 with conclusion selected). Queue: 4 rules.
+400 rules inserted. Base: 397 rules (57 with conclusion selected). Queue: 172 rules.
+600 rules inserted. Base: 578 rules (67 with conclusion selected). Queue: 52 rules.
+800 rules inserted. Base: 704 rules (80 with conclusion selected). Queue: 24 rules.
+1000 rules inserted. Base: 787 rules (105 with conclusion selected). Queue: 20 rules.
+1200 rules inserted. Base: 937 rules (126 with conclusion selected). Queue: 9 rules.
+1400 rules inserted. Base: 997 rules (145 with conclusion selected). Queue: 6 rules.
 Starting query not attacker(qkd_k(R2,R1))
 RESULT not attacker(qkd_k(R2,R1)) is true.
 -- Query event(CtrlIssuedCert(rid_7,n_7,m,pb)) ==> event(CtrlGotAttest(rid_7,n_7,m)) in process 1.
 Translating the process into Horn clauses...
 Completing...
 200 rules inserted. Base: 200 rules (48 with conclusion selected). Queue: 242 rules.
-400 rules inserted. Base: 398 rules (57 with conclusion selected). Queue: 179 rules.
-600 rules inserted. Base: 578 rules (63 with conclusion selected). Queue: 27 rules.
-800 rules inserted. Base: 701 rules (77 with conclusion selected). Queue: 53 rules.
-1000 rules inserted. Base: 813 rules (96 with conclusion selected). Queue: 5 rules.
-1200 rules inserted. Base: 953 rules (122 with conclusion selected). Queue: 24 rules.
-1400 rules inserted. Base: 1032 rules (141 with conclusion selected). Queue: 2 rules.
+400 rules inserted. Base: 397 rules (57 with conclusion selected). Queue: 179 rules.
+600 rules inserted. Base: 578 rules (64 with conclusion selected). Queue: 45 rules.
+800 rules inserted. Base: 701 rules (77 with conclusion selected). Queue: 52 rules.
+1000 rules inserted. Base: 812 rules (97 with conclusion selected). Queue: 5 rules.
+1200 rules inserted. Base: 953 rules (122 with conclusion selected). Queue: 23 rules.
+1400 rules inserted. Base: 1029 rules (139 with conclusion selected). Queue: 4 rules.
 Starting query event(CtrlIssuedCert(rid_7,n_7,m,pb)) ==> event(CtrlGotAttest(rid_7,n_7,m))
 goal reachable: b-event(CtrlGotAttest(R0,n_7,meas(R0))) && b-event(@p_act(@occ54_7,senc((tag_nonce[],n_7),k_11))) -> event(CtrlIssuedCert(R0,n_7,meas(R0),pkb(pk(relay_sk_12))))
 Abbreviations:
@@ -1180,12 +1180,12 @@ RESULT event(CtrlIssuedCert(rid_7,n_7,m,pb)) ==> event(CtrlGotAttest(rid_7,n_7,m
 Translating the process into Horn clauses...
 Completing...
 200 rules inserted. Base: 200 rules (48 with conclusion selected). Queue: 240 rules.
-400 rules inserted. Base: 397 rules (57 with conclusion selected). Queue: 176 rules.
-600 rules inserted. Base: 578 rules (66 with conclusion selected). Queue: 50 rules.
-800 rules inserted. Base: 696 rules (77 with conclusion selected). Queue: 38 rules.
-1000 rules inserted. Base: 784 rules (106 with conclusion selected). Queue: 15 rules.
-1200 rules inserted. Base: 936 rules (129 with conclusion selected). Queue: 7 rules.
-1400 rules inserted. Base: 1007 rules (147 with conclusion selected). Queue: 4 rules.
+400 rules inserted. Base: 397 rules (57 with conclusion selected). Queue: 175 rules.
+600 rules inserted. Base: 578 rules (66 with conclusion selected). Queue: 49 rules.
+800 rules inserted. Base: 696 rules (77 with conclusion selected). Queue: 37 rules.
+1000 rules inserted. Base: 784 rules (106 with conclusion selected). Queue: 14 rules.
+1200 rules inserted. Base: 935 rules (127 with conclusion selected). Queue: 5 rules.
+1400 rules inserted. Base: 996 rules (143 with conclusion selected). Queue: 4 rules.
 Starting query event(CtrlGotAttest(rid_7,n_7,m)) ==> event(CtrlGotRegister(rid_7))
 goal reachable: b-event(@p_act(@occ54_8,senc((tag_nonce[],n_7),k_11))) && b-event(CtrlGotRegister(R0)) -> event(CtrlGotAttest(R0,n_7,meas(R0)))
 Abbreviations:
@@ -1207,12 +1207,12 @@ RESULT event(CtrlGotAttest(rid_7,n_7,m)) ==> event(CtrlGotRegister(rid_7)) is tr
 Translating the process into Horn clauses...
 Completing...
 200 rules inserted. Base: 200 rules (48 with conclusion selected). Queue: 242 rules.
-400 rules inserted. Base: 398 rules (57 with conclusion selected). Queue: 179 rules.
-600 rules inserted. Base: 578 rules (63 with conclusion selected). Queue: 27 rules.
-800 rules inserted. Base: 701 rules (77 with conclusion selected). Queue: 53 rules.
-1000 rules inserted. Base: 818 rules (95 with conclusion selected). Queue: 4 rules.
-1200 rules inserted. Base: 953 rules (122 with conclusion selected). Queue: 30 rules.
-1400 rules inserted. Base: 1036 rules (141 with conclusion selected). Queue: 4 rules.
+400 rules inserted. Base: 397 rules (57 with conclusion selected). Queue: 179 rules.
+600 rules inserted. Base: 578 rules (64 with conclusion selected). Queue: 45 rules.
+800 rules inserted. Base: 701 rules (77 with conclusion selected). Queue: 52 rules.
+1000 rules inserted. Base: 818 rules (95 with conclusion selected). Queue: 3 rules.
+1200 rules inserted. Base: 953 rules (122 with conclusion selected). Queue: 29 rules.
+1400 rules inserted. Base: 1034 rules (139 with conclusion selected). Queue: 5 rules.
 Starting query inj-event(CtrlIssuedCert(rid_7,n_7,m,pb)) ==> inj-event(CtrlGotAttest(rid_7,n_7,m))
 goal reachable: b-event(@p_act(@occ38_1,senc((tag_gencrt[],pkb(pk(relay_sk_12))),k_11))) && b-event(@p_act(@occ32_1,senc((tag_cfg_req[],R0),k_11))) && b-inj-event(CtrlGotAttest(R0,n_7,meas(R0)),@occ30_1) && b-event(@p_act(@occ54_9,senc((tag_nonce[],n_7),k_11))) -> inj-event(CtrlIssuedCert(R0,n_7,meas(R0),pkb(pk(relay_sk_12))),@occ41_1)
 The 1st, 2nd, 3rd, 4th hypotheses occur strictly before the conclusion.
@@ -1252,12 +1252,12 @@ RESULT inj-event(CtrlIssuedCert(rid_7,n_7,m,pb)) ==> inj-event(CtrlGotAttest(rid
 Translating the process into Horn clauses...
 Completing...
 200 rules inserted. Base: 200 rules (48 with conclusion selected). Queue: 240 rules.
-400 rules inserted. Base: 397 rules (57 with conclusion selected). Queue: 176 rules.
-600 rules inserted. Base: 578 rules (66 with conclusion selected). Queue: 50 rules.
-800 rules inserted. Base: 696 rules (77 with conclusion selected). Queue: 38 rules.
-1000 rules inserted. Base: 802 rules (106 with conclusion selected). Queue: 15 rules.
-1200 rules inserted. Base: 954 rules (129 with conclusion selected). Queue: 7 rules.
-1400 rules inserted. Base: 1025 rules (147 with conclusion selected). Queue: 4 rules.
+400 rules inserted. Base: 397 rules (57 with conclusion selected). Queue: 175 rules.
+600 rules inserted. Base: 578 rules (66 with conclusion selected). Queue: 49 rules.
+800 rules inserted. Base: 696 rules (77 with conclusion selected). Queue: 37 rules.
+1000 rules inserted. Base: 802 rules (106 with conclusion selected). Queue: 14 rules.
+1200 rules inserted. Base: 953 rules (127 with conclusion selected). Queue: 5 rules.
+1400 rules inserted. Base: 1014 rules (143 with conclusion selected). Queue: 4 rules.
 Starting query inj-event(CtrlGotAttest(rid_7,n_7,m)) ==> inj-event(RelaySignedReport(rid_7,n_7,m))
 goal reachable: b-inj-event(RelaySignedReport(R0,n_7,meas(R0)),@occ56_1) && b-event(@p_act(@occ54_10,senc((tag_nonce[],n_7),k_11))) -> inj-event(CtrlGotAttest(R0,n_7,meas(R0)),@occ30_2)
 The 1st, 2nd hypotheses occur strictly before the conclusion.
@@ -1289,12 +1289,12 @@ Translating the process into Horn clauses...
 Completing...
 200 rules inserted. Base: 200 rules (48 with conclusion selected). Queue: 274 rules.
 400 rules inserted. Base: 398 rules (55 with conclusion selected). Queue: 236 rules.
-600 rules inserted. Base: 594 rules (63 with conclusion selected). Queue: 67 rules.
+600 rules inserted. Base: 594 rules (63 with conclusion selected). Queue: 66 rules.
 800 rules inserted. Base: 727 rules (77 with conclusion selected). Queue: 33 rules.
-1000 rules inserted. Base: 824 rules (100 with conclusion selected). Queue: 13 rules.
-1200 rules inserted. Base: 983 rules (120 with conclusion selected). Queue: 16 rules.
-1400 rules inserted. Base: 1043 rules (134 with conclusion selected). Queue: 4 rules.
-1600 rules inserted. Base: 1116 rules (154 with conclusion selected). Queue: 5 rules.
+1000 rules inserted. Base: 823 rules (100 with conclusion selected). Queue: 13 rules.
+1200 rules inserted. Base: 983 rules (121 with conclusion selected). Queue: 16 rules.
+1400 rules inserted. Base: 1040 rules (132 with conclusion selected). Queue: 4 rules.
+1600 rules inserted. Base: 1104 rules (154 with conclusion selected). Queue: 4 rules.
 Starting query event(RelayGotHop(m,f,t)) ==> event(HopSent(m,f,t))
 goal reachable: b-event(HopSent(secret_msg_reverse[],R1,R0)) && b-event(HopSent(secret_msg_reverse[],R2,R1)) && b-event(HopSent(secret_msg_reverse[],APP_R,R2)) && b-event(@p_act(@occ190_11,senc((tag_nonce[],n_7),k_11))) && b-event(@p_act(@occ122_11,senc((tag_nonce[],n_8),k_12))) && b-event(@p_act(@occ54_11,senc((tag_nonce[],n_9),k_13))) -> event(RelayGotHop(secret_msg_reverse[],R1,R0))
 Abbreviations:
@@ -1350,12 +1350,12 @@ Translating the process into Horn clauses...
 Completing...
 200 rules inserted. Base: 200 rules (48 with conclusion selected). Queue: 274 rules.
 400 rules inserted. Base: 398 rules (55 with conclusion selected). Queue: 236 rules.
-600 rules inserted. Base: 594 rules (63 with conclusion selected). Queue: 67 rules.
+600 rules inserted. Base: 594 rules (63 with conclusion selected). Queue: 66 rules.
 800 rules inserted. Base: 727 rules (77 with conclusion selected). Queue: 33 rules.
-1000 rules inserted. Base: 824 rules (100 with conclusion selected). Queue: 13 rules.
-1200 rules inserted. Base: 983 rules (120 with conclusion selected). Queue: 16 rules.
-1400 rules inserted. Base: 1043 rules (134 with conclusion selected). Queue: 4 rules.
-1600 rules inserted. Base: 1116 rules (154 with conclusion selected). Queue: 5 rules.
+1000 rules inserted. Base: 823 rules (100 with conclusion selected). Queue: 13 rules.
+1200 rules inserted. Base: 983 rules (121 with conclusion selected). Queue: 16 rules.
+1400 rules inserted. Base: 1040 rules (132 with conclusion selected). Queue: 4 rules.
+1600 rules inserted. Base: 1104 rules (154 with conclusion selected). Queue: 4 rules.
 Starting query event(RelayGotHop(x,f,t)) ==> event(RelayLoadedCfg(t,n_7,f,r)) || event(RelayLoadedCfg(t,n_7,l,f))
 goal reachable: b-event(RelayLoadedCfg(R2,n_7,R1,APP_R)) && b-event(@p_act(@occ190_12,senc((tag_nonce[],n_7),k_11))) && b-event(RelayLoadedCfg(R1,n_8,R0,R2)) && b-event(@p_act(@occ122_12,senc((tag_nonce[],n_8),k_12))) && b-event(RelayLoadedCfg(R0,n_9,APP_L,R1)) && b-event(@p_act(@occ54_12,senc((tag_nonce[],n_9),k_13))) -> event(RelayGotHop(secret_msg_reverse[],R1,R0))
 Abbreviations:
@@ -1411,12 +1411,12 @@ Translating the process into Horn clauses...
 Completing...
 200 rules inserted. Base: 200 rules (48 with conclusion selected). Queue: 274 rules.
 400 rules inserted. Base: 398 rules (55 with conclusion selected). Queue: 236 rules.
-600 rules inserted. Base: 594 rules (63 with conclusion selected). Queue: 67 rules.
+600 rules inserted. Base: 594 rules (63 with conclusion selected). Queue: 66 rules.
 800 rules inserted. Base: 727 rules (77 with conclusion selected). Queue: 33 rules.
-1000 rules inserted. Base: 824 rules (100 with conclusion selected). Queue: 13 rules.
-1200 rules inserted. Base: 985 rules (117 with conclusion selected). Queue: 73 rules.
-1400 rules inserted. Base: 1097 rules (132 with conclusion selected). Queue: 6 rules.
-1600 rules inserted. Base: 1155 rules (154 with conclusion selected). Queue: 4 rules.
+1000 rules inserted. Base: 823 rules (100 with conclusion selected). Queue: 13 rules.
+1200 rules inserted. Base: 985 rules (117 with conclusion selected). Queue: 72 rules.
+1400 rules inserted. Base: 1094 rules (130 with conclusion selected). Queue: 6 rules.
+1600 rules inserted. Base: 1150 rules (152 with conclusion selected). Queue: 6 rules.
 Starting query event(RelaySentHop(x,f,t)) ==> event(RelayLoadedCfg(f,n_7,l,t)) || event(RelayLoadedCfg(f,n_7,t,r))
 goal reachable: b-event(RelayLoadedCfg(R2,n_7,R1,APP_R)) && b-event(@p_act(@occ190_13,senc((tag_nonce[],n_7),k_11))) && b-event(RelayLoadedCfg(R1,n_8,R0,R2)) && b-event(@p_act(@occ122_13,senc((tag_nonce[],n_8),k_12))) && b-event(RelayLoadedCfg(R0,n_9,APP_L,R1)) && b-event(@p_act(@occ54_13,senc((tag_nonce[],n_9),k_13))) -> event(RelaySentHop(secret_msg_reverse[],R0,APP_L))
 Abbreviations:
@@ -1483,12 +1483,12 @@ RESULT event(RelaySentHop(x,f,t)) ==> event(RelayLoadedCfg(f,n_7,l,t)) || event(
 Translating the process into Horn clauses...
 Completing...
 200 rules inserted. Base: 200 rules (48 with conclusion selected). Queue: 245 rules.
-400 rules inserted. Base: 398 rules (57 with conclusion selected). Queue: 184 rules.
-600 rules inserted. Base: 577 rules (63 with conclusion selected). Queue: 35 rules.
-800 rules inserted. Base: 704 rules (77 with conclusion selected). Queue: 34 rules.
-1000 rules inserted. Base: 787 rules (104 with conclusion selected). Queue: 22 rules.
-1200 rules inserted. Base: 949 rules (127 with conclusion selected). Queue: 11 rules.
-1400 rules inserted. Base: 1018 rules (143 with conclusion selected). Queue: 6 rules.
+400 rules inserted. Base: 398 rules (57 with conclusion selected). Queue: 183 rules.
+600 rules inserted. Base: 577 rules (63 with conclusion selected). Queue: 34 rules.
+800 rules inserted. Base: 703 rules (77 with conclusion selected). Queue: 34 rules.
+1000 rules inserted. Base: 786 rules (104 with conclusion selected). Queue: 22 rules.
+1200 rules inserted. Base: 948 rules (127 with conclusion selected). Queue: 9 rules.
+1400 rules inserted. Base: 1017 rules (143 with conclusion selected). Queue: 4 rules.
 Starting query event(RelayLoadedCfg(rid_7,n_7,l,r)) ==> event(CtrlSentCfg(rid_7,n_7,l,r))
 goal reachable: b-event(CtrlSentCfg(R0,n_7,APP_L,R1)) && b-event(@p_act(@occ54_14,senc((tag_nonce[],n_7),k_11))) -> event(RelayLoadedCfg(R0,n_7,APP_L,R1))
 Abbreviations:
@@ -1510,12 +1510,12 @@ RESULT event(RelayLoadedCfg(rid_7,n_7,l,r)) ==> event(CtrlSentCfg(rid_7,n_7,l,r)
 Translating the process into Horn clauses...
 Completing...
 200 rules inserted. Base: 200 rules (48 with conclusion selected). Queue: 245 rules.
-400 rules inserted. Base: 398 rules (57 with conclusion selected). Queue: 184 rules.
-600 rules inserted. Base: 582 rules (63 with conclusion selected). Queue: 35 rules.
-800 rules inserted. Base: 713 rules (77 with conclusion selected). Queue: 33 rules.
-1000 rules inserted. Base: 795 rules (105 with conclusion selected). Queue: 25 rules.
-1200 rules inserted. Base: 956 rules (129 with conclusion selected). Queue: 10 rules.
-1400 rules inserted. Base: 1028 rules (147 with conclusion selected). Queue: 4 rules.
+400 rules inserted. Base: 398 rules (57 with conclusion selected). Queue: 183 rules.
+600 rules inserted. Base: 582 rules (63 with conclusion selected). Queue: 34 rules.
+800 rules inserted. Base: 713 rules (77 with conclusion selected). Queue: 32 rules.
+1000 rules inserted. Base: 795 rules (105 with conclusion selected). Queue: 24 rules.
+1200 rules inserted. Base: 953 rules (127 with conclusion selected). Queue: 10 rules.
+1400 rules inserted. Base: 1017 rules (143 with conclusion selected). Queue: 4 rules.
 Starting query event(RelayGotCert(rid_7,n_7,m,pb)) ==> event(CtrlIssuedCert(rid_7,n_7,m,pb))
 goal reachable: b-event(CtrlIssuedCert(R0,n_7,meas(R0),pkb(pk(relay_sk_12)))) && b-event(@p_act(@occ54_15,senc((tag_nonce[],n_7),k_11))) -> event(RelayGotCert(R0,n_7,meas(R0),pkb(pk(relay_sk_12))))
 Abbreviations:
@@ -1540,13 +1540,13 @@ RESULT event(RelayGotCert(rid_7,n_7,m,pb)) ==> event(CtrlIssuedCert(rid_7,n_7,m,
 Translating the process into Horn clauses...
 Completing...
 200 rules inserted. Base: 200 rules (48 with conclusion selected). Queue: 253 rules.
-400 rules inserted. Base: 398 rules (55 with conclusion selected). Queue: 195 rules.
-600 rules inserted. Base: 586 rules (63 with conclusion selected). Queue: 32 rules.
-800 rules inserted. Base: 713 rules (77 with conclusion selected). Queue: 37 rules.
-1000 rules inserted. Base: 804 rules (103 with conclusion selected). Queue: 32 rules.
-1200 rules inserted. Base: 968 rules (124 with conclusion selected). Queue: 19 rules.
-1400 rules inserted. Base: 1026 rules (140 with conclusion selected). Queue: 9 rules.
-1600 rules inserted. Base: 1093 rules (160 with conclusion selected). Queue: 4 rules.
+400 rules inserted. Base: 398 rules (55 with conclusion selected). Queue: 194 rules.
+600 rules inserted. Base: 585 rules (63 with conclusion selected). Queue: 32 rules.
+800 rules inserted. Base: 713 rules (77 with conclusion selected). Queue: 36 rules.
+1000 rules inserted. Base: 803 rules (103 with conclusion selected). Queue: 32 rules.
+1200 rules inserted. Base: 967 rules (124 with conclusion selected). Queue: 17 rules.
+1400 rules inserted. Base: 1024 rules (136 with conclusion selected). Queue: 4 rules.
+1600 rules inserted. Base: 1077 rules (159 with conclusion selected). Queue: 1 rules.
 Starting query inj-event(HopPeerAuthenticated(f,t,ek_17,n_7)) ==> inj-event(HopSignedTranscript(f,t,ek_17,n_7))
 goal reachable: b-inj-event(HopSignedTranscript(R0,R1,aenc(k_out_6,pk(relay_sk_12)),challenge_16),@occ105_1) && b-inj-event(HopSignedTranscript(APP_L,R0,aenc(k_11,pk(relay_sk_13)),challenge_17),@occ465_1) && b-event(@p_act(@occ54_16,senc((tag_nonce[],n_7),k_12))) && b-event(@p_act(@occ122_16,senc((tag_nonce[],n_8),k_13))) -> inj-event(HopPeerAuthenticated(R0,R1,aenc(k_out_6,pk(relay_sk_12)),challenge_16),@occ157_1)
 The 1st, 2nd, 3rd, 4th hypotheses occur strictly before the conclusion.
@@ -1717,12 +1717,12 @@ RESULT inj-event(HopPeerAuthenticated(f,t,ek_17,n_7)) ==> inj-event(HopSignedTra
 Translating the process into Horn clauses...
 Completing...
 200 rules inserted. Base: 200 rules (48 with conclusion selected). Queue: 241 rules.
-400 rules inserted. Base: 397 rules (57 with conclusion selected). Queue: 177 rules.
-600 rules inserted. Base: 578 rules (65 with conclusion selected). Queue: 47 rules.
-800 rules inserted. Base: 704 rules (80 with conclusion selected). Queue: 29 rules.
-1000 rules inserted. Base: 785 rules (104 with conclusion selected). Queue: 14 rules.
-1200 rules inserted. Base: 935 rules (126 with conclusion selected). Queue: 6 rules.
-1400 rules inserted. Base: 1003 rules (146 with conclusion selected). Queue: 5 rules.
+400 rules inserted. Base: 397 rules (57 with conclusion selected). Queue: 176 rules.
+600 rules inserted. Base: 578 rules (66 with conclusion selected). Queue: 50 rules.
+800 rules inserted. Base: 704 rules (80 with conclusion selected). Queue: 28 rules.
+1000 rules inserted. Base: 785 rules (104 with conclusion selected). Queue: 15 rules.
+1200 rules inserted. Base: 935 rules (124 with conclusion selected). Queue: 7 rules.
+1400 rules inserted. Base: 1000 rules (144 with conclusion selected). Queue: 2 rules.
 Starting query event(AppDelivered(m,f,t)) ==> event(HopSent(m,f,t))
 goal reachable: b-event(HopSent(secret_msg_reverse[],R0,APP_L)) && b-event(HopSent(secret_msg_reverse[],R1,R0)) && b-event(HopSent(secret_msg_reverse[],R2,R1)) && b-event(HopSent(secret_msg_reverse[],APP_R,R2)) && b-event(@p_act(@occ190_17,senc((tag_nonce[],n_7),k_11))) && b-event(@p_act(@occ122_17,senc((tag_nonce[],n_8),k_12))) && b-event(@p_act(@occ54_17,senc((tag_nonce[],n_9),k_13))) -> event(AppDelivered(secret_msg_reverse[],R0,APP_L))
 Abbreviations:

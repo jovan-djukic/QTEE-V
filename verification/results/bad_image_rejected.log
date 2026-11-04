@@ -1078,12 +1078,12 @@ Process 0 (that is, the initial process):
 Translating the process into Horn clauses...
 Completing...
 200 rules inserted. Base: 200 rules (48 with conclusion selected). Queue: 240 rules.
-400 rules inserted. Base: 397 rules (57 with conclusion selected). Queue: 176 rules.
-600 rules inserted. Base: 578 rules (66 with conclusion selected). Queue: 50 rules.
-800 rules inserted. Base: 696 rules (77 with conclusion selected). Queue: 38 rules.
-1000 rules inserted. Base: 784 rules (106 with conclusion selected). Queue: 15 rules.
-1200 rules inserted. Base: 936 rules (129 with conclusion selected). Queue: 7 rules.
-1400 rules inserted. Base: 1007 rules (147 with conclusion selected). Queue: 4 rules.
+400 rules inserted. Base: 397 rules (57 with conclusion selected). Queue: 175 rules.
+600 rules inserted. Base: 578 rules (66 with conclusion selected). Queue: 49 rules.
+800 rules inserted. Base: 696 rules (77 with conclusion selected). Queue: 37 rules.
+1000 rules inserted. Base: 784 rules (106 with conclusion selected). Queue: 14 rules.
+1200 rules inserted. Base: 935 rules (127 with conclusion selected). Queue: 5 rules.
+1400 rules inserted. Base: 996 rules (143 with conclusion selected). Queue: 4 rules.
 Starting query not event(CtrlGotAttest(rid_7,n_7,bad_meas(rid_7)))
 RESULT not event(CtrlGotAttest(rid_7,n_7,bad_meas(rid_7))) is true.
 

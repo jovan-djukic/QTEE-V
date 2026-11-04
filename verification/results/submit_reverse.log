@@ -1078,12 +1078,12 @@ Process 0 (that is, the initial process):
 Translating the process into Horn clauses...
 Completing...
 200 rules inserted. Base: 200 rules (48 with conclusion selected). Queue: 241 rules.
-400 rules inserted. Base: 397 rules (57 with conclusion selected). Queue: 177 rules.
-600 rules inserted. Base: 578 rules (65 with conclusion selected). Queue: 47 rules.
-800 rules inserted. Base: 704 rules (80 with conclusion selected). Queue: 29 rules.
-1000 rules inserted. Base: 787 rules (104 with conclusion selected). Queue: 16 rules.
-1200 rules inserted. Base: 935 rules (128 with conclusion selected). Queue: 6 rules.
-1400 rules inserted. Base: 1003 rules (148 with conclusion selected). Queue: 5 rules.
+400 rules inserted. Base: 397 rules (57 with conclusion selected). Queue: 176 rules.
+600 rules inserted. Base: 578 rules (66 with conclusion selected). Queue: 50 rules.
+800 rules inserted. Base: 704 rules (80 with conclusion selected). Queue: 28 rules.
+1000 rules inserted. Base: 787 rules (104 with conclusion selected). Queue: 17 rules.
+1200 rules inserted. Base: 935 rules (126 with conclusion selected). Queue: 7 rules.
+1400 rules inserted. Base: 1000 rules (146 with conclusion selected). Queue: 2 rules.
 Starting query not event(AppSubmitted(secret_msg_reverse[],APP_R,R2))
 goal reachable: b-event(@p_act(@occ190_1,senc((tag_nonce[],n_7),k_11))) -> event(AppSubmitted(secret_msg_reverse[],APP_R,R2))
 Abbreviations:

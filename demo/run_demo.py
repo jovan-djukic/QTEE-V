@@ -21,6 +21,7 @@ Runs, unattended, against the Keystone QEMU guest:
   test11 impostor with a valid CA-signed cert in a KME's place -> R0 drops the message
   test12 CN that is only part of R1's whitelist string -> rejected
   test13 hop whose decryption key can't be fetched -> R1 drops the message
+  test14 R1's enclave image relabelled as R0 -> no measurement pinned for R0 -> refused
 
 Every line in the logs is stamped with the host clock when the harness
 received it ("host time") and tagged with its source; the relays' own
@@ -61,6 +62,8 @@ GUEST_KEY = os.path.join(KEYSTONE, "build-generic64/overlay/root/.ssh/id-rsa")
 KME_DIR = os.path.join(REPO, "external/next-door-key-simulator")
 GUEST_RELAY_DIR = "/tmp/relay"
 GUEST_TAMPERED_DIR = "/tmp/relay_mod"
+# R1's enclave eapp; its relay ID and port are compiled in (relay.c)
+ENCLAVE_EAPP = "relay-R1"
 DEFAULT_PAYLOAD = "QTEE-V demo payload: application key 3f9a1c07e2b4d8a6 for APP_R"
 
 # Re-exec with the WolfSSL runtime on the loader path: wolfssl_mldsa loads it
@@ -231,7 +234,7 @@ def guest_prepare() -> str:
     """Load the driver, unpack relay.ke, return the release measurement."""
     r = gssh(f"modprobe keystone-driver; rm -rf {GUEST_RELAY_DIR} {GUEST_TAMPERED_DIR}; "
              f"/usr/share/keystone/examples/relay.ke --noexec --target {GUEST_RELAY_DIR} >/dev/null && "
-             f"cd {GUEST_RELAY_DIR} && ./relay-runner relay eyrie-rt loader.bin --measure")
+             f"cd {GUEST_RELAY_DIR} && ./relay-runner {ENCLAVE_EAPP} eyrie-rt loader.bin --measure")
     meas = r.stdout.decode().strip().splitlines()[-1] if r.stdout else ""
     if r.returncode != 0 or not re.fullmatch(r"[0-9a-f]{128}", meas):
         sys.exit(f"Could not measure the enclave in the guest:\n{r.stdout.decode()}{r.stderr.decode()}")
@@ -242,12 +245,27 @@ def guest_kill_relay():
     gssh("killall relay-runner 2>/dev/null; true", timeout=120)
 
 
+def guest_eapp() -> bytes:
+    """The release enclave eapp, as unpacked by guest_prepare."""
+    return gssh(f"cat {GUEST_RELAY_DIR}/{ENCLAVE_EAPP}").stdout
+
+
+def install_tampered_eapp(image: bytes) -> str:
+    """Copy the release package to GUEST_TAMPERED_DIR with the eapp replaced by
+    `image`; return the measurement of the result."""
+    gssh(f"rm -rf {GUEST_TAMPERED_DIR} && cp -r {GUEST_RELAY_DIR} {GUEST_TAMPERED_DIR} && "
+         f"cat > {GUEST_TAMPERED_DIR}/{ENCLAVE_EAPP} && chmod +x {GUEST_TAMPERED_DIR}/{ENCLAVE_EAPP}",
+         input_bytes=image)
+    m = gssh(f"cd {GUEST_TAMPERED_DIR} && ./relay-runner {ENCLAVE_EAPP} eyrie-rt loader.bin --measure")
+    return m.stdout.decode().strip().splitlines()[-1] if m.stdout else ""
+
+
 # ==================== Components ====================
 
 def start_controller(log: Log, meas: str, extra, evidence_dir: str) -> Proc:
     cmd = ["python3", "controller.py",
            "--pqc-ca-cert", "./pqc_ca/ca_certificate.pem", "--pqc-ca-key", "./pqc_ca/ca_private_key.pem",
-           "--enclave-measurement", meas, "--attestation-evidence-dir", evidence_dir] + extra
+           "--enclave-measurement", f"R1={meas}", "--attestation-evidence-dir", evidence_dir] + extra
     log.emit("harness", "$ " + " ".join(cmd))
     c = Proc(log, "CTRL", cmd)
     if not c.wait_for(r"WolfSSL TLS controller server on port", 30):
@@ -263,7 +281,7 @@ def start_host_relay(log: Log, idx: int, kind: str) -> Proc:
 
 
 def start_enclave_relay(log: Log, guest_dir: str = GUEST_RELAY_DIR) -> Proc:
-    cmd = f"cd {guest_dir} && ./relay-runner relay eyrie-rt loader.bin 2>&1"
+    cmd = f"cd {guest_dir} && ./relay-runner {ENCLAVE_EAPP} eyrie-rt loader.bin 2>&1"
     log.emit("harness", f"$ (guest) {cmd}")
     return Proc(log, "R1·enclave", gssh_cmd(cmd))
 
@@ -595,15 +613,12 @@ One byte of the enclave binary is changed (a string in .rodata: the relay's
 start-up banner), the image is otherwise identical: same Eyrie runtime and
 loader, same Keystone SM and keys. The tampered relay runs as R1 in a real
 enclave; the controller is still pinned to the release measurement.""", expected)
-    relay_bin = gssh(f"cat {GUEST_RELAY_DIR}/relay").stdout
+    relay_bin = guest_eapp()
     banner = b"QKD Relay (WolfSSL mTLS PQC)"
     i = relay_bin.find(banner)
     tampered = relay_bin[:i] + b"q" + relay_bin[i + 1:]
     log.emit("harness", f"patched byte at offset {i:#x}: {banner[:1]!r} -> b'q' ({len(relay_bin)} byte image)")
-    gssh(f"rm -rf {GUEST_TAMPERED_DIR} && cp -r {GUEST_RELAY_DIR} {GUEST_TAMPERED_DIR} && "
-         f"cat > {GUEST_TAMPERED_DIR}/relay && chmod +x {GUEST_TAMPERED_DIR}/relay", input_bytes=tampered)
-    m = gssh(f"cd {GUEST_TAMPERED_DIR} && ./relay-runner relay eyrie-rt loader.bin --measure")
-    tmeas = m.stdout.decode().strip().splitlines()[-1]
+    tmeas = install_tampered_eapp(tampered)
     log.emit("harness", f"release measurement : {meas}")
     log.emit("harness", f"tampered measurement: {tmeas}")
     ctrl = start_controller(log, meas, [], os.path.join(out, "evidence_test5"))
@@ -616,6 +631,38 @@ enclave; the controller is still pinned to the release measurement.""", expected
     verdict(log, "test5: modified enclave image", expected,
             f"controller: {reason.group(1) if reason else 'no attestation seen'}; "
             f"certificate issued: {bool(issued)}", bool(ok))
+    log.close()
+
+
+def test14_relabelled_image(out, meas):
+    expected = "refused: no enclave measurement pinned for R0; no certificate issued"
+    log = test_log(out, "test14_relabelled_enclave", "R1's enclave image relabelled as R0 -> refused", """
+The relay ID is compiled into the enclave image, so its measurement covers it.
+The host takes R1's release image and changes only the compiled-in ID to R0,
+then runs it in a real enclave. It attests as R0, but the controller pins a
+measurement only for R1, and the relabelled image's measurement differs from
+R1's anyway.""", expected)
+    relay_bin = guest_eapp()
+    marker = b"relay_id=R1"
+    i = relay_bin.find(marker)
+    if i < 0 or relay_bin.count(marker) != 1:
+        sys.exit(f"test14: expected one {marker!r} in {ENCLAVE_EAPP}, found {relay_bin.count(marker)}")
+    relabelled = relay_bin[:i] + b"relay_id=R0" + relay_bin[i + len(marker):]
+    log.emit("harness", f"patched {marker!r} -> b'relay_id=R0' at offset {i:#x}")
+    rmeas = install_tampered_eapp(relabelled)
+    log.emit("harness", f"release R1 measurement: {meas}")
+    log.emit("harness", f"relabelled measurement: {rmeas}")
+    ctrl = start_controller(log, meas, [], os.path.join(out, "evidence_test14"))
+    r = start_enclave_relay(log, GUEST_TAMPERED_DIR)
+    reason = ctrl.wait_for(r"\[R0\] (Attestation verification failed: .*|Authenticated.*)", 600)
+    time.sleep(2)
+    issued = ctrl.find(r"Issued ML-DSA-65 certificate CN=R0")
+    stop_all([ctrl, r])
+    ok = (reason and "no enclave measurement pinned for R0" in reason.group(1)
+          and not issued and rmeas != meas)
+    verdict(log, "test14: R1 image relabelled as R0", expected,
+            f"controller: {reason.group(1) if reason else 'no attestation seen'}; "
+            f"certificate issued: {bool(issued)}; measurement changed: {rmeas != meas}", bool(ok))
     log.close()
 
 
@@ -989,7 +1036,7 @@ def main():
     ap.add_argument("--host-relays", choices=("py", "c"), default="py")
     ap.add_argument("--payload", default=DEFAULT_PAYLOAD)
     tests = ("demo", "test1", "test2", "test3", "test4", "test5", "test6", "test7", "test8",
-             "test9", "test10", "test11", "test12", "test13")
+             "test9", "test10", "test11", "test12", "test13", "test14")
     ap.add_argument("--only", nargs="+", choices=tests)
     args = ap.parse_args()
     want = set(args.only or tests)
@@ -1026,6 +1073,7 @@ def main():
                 log.close()
         if "test4" in want: test4_replay(args.out, meas)
         if "test5" in want: test5_modified_image(args.out, meas)
+        if "test14" in want: test14_relabelled_image(args.out, meas)
         if "test6" in want: test6_cn(args.out, meas)
         if "test8" in want: test8_fake_controller(args.out)
         if "test9" in want: test9_kme_api(args.out)

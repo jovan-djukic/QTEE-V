@@ -1078,12 +1078,12 @@ Process 0 (that is, the initial process):
 Translating the process into Horn clauses...
 Completing...
 200 rules inserted. Base: 200 rules (48 with conclusion selected). Queue: 242 rules.
-400 rules inserted. Base: 398 rules (57 with conclusion selected). Queue: 179 rules.
-600 rules inserted. Base: 578 rules (63 with conclusion selected). Queue: 27 rules.
-800 rules inserted. Base: 701 rules (77 with conclusion selected). Queue: 53 rules.
-1000 rules inserted. Base: 807 rules (96 with conclusion selected). Queue: 5 rules.
-1200 rules inserted. Base: 947 rules (122 with conclusion selected). Queue: 24 rules.
-1400 rules inserted. Base: 1026 rules (141 with conclusion selected). Queue: 2 rules.
+400 rules inserted. Base: 397 rules (57 with conclusion selected). Queue: 179 rules.
+600 rules inserted. Base: 578 rules (64 with conclusion selected). Queue: 45 rules.
+800 rules inserted. Base: 701 rules (77 with conclusion selected). Queue: 52 rules.
+1000 rules inserted. Base: 806 rules (97 with conclusion selected). Queue: 5 rules.
+1200 rules inserted. Base: 947 rules (122 with conclusion selected). Queue: 23 rules.
+1400 rules inserted. Base: 1023 rules (139 with conclusion selected). Queue: 4 rules.
 Starting query not event(CtrlIssuedCert(R2,n_7,m,pb))
 goal reachable: b-event(@p_act(@occ190_1,senc((tag_nonce[],n_7),k_11))) -> event(CtrlIssuedCert(R2,n_7,meas(R2),pkb(pk(relay_sk_12))))
 Abbreviations:
