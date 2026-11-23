@@ -19,10 +19,14 @@ Bootstrap order:
 
 Attestation:
   A relay is admitted only on a Keystone attestation report that chains to
-  the pinned root key, carries the measurement pinned for that relay_id,
-  and binds "<relay_id>:<nonce_hex>" (see keystone_attestation.py). Each
-  enclave image has its relay ID compiled in, so its measurement identifies
-  the relay. The SHA256
+  the root key of the device provisioned for that relay_id (--device-key),
+  carries the measurement pinned for that relay_id, and binds
+  "<relay_id>:<nonce_hex>" (see keystone_attestation.py). Each enclave image
+  has its relay ID compiled in, so its measurement identifies the relay; the
+  device key ties the relay ID to one device, so the same genuine image on
+  another device is refused. Under QEMU each device's root key comes from a
+  seed file on the host (tools/make_devices.sh): per-device, not
+  hardware-protected. The SHA256
   stand-in report of non-enclave relays (relay.py, native relay.c) is
   refused unless --insecure-dev-attestation names that relay. The relay's
   platform is inferred from which kind of report verified, never taken
@@ -42,6 +46,7 @@ Usage:
   # Run controller:
   python controller.py --pqc-ca-cert ./pqc_ca/ca_certificate.pem --pqc-ca-key ./pqc_ca/ca_private_key.pem \
       --enclave-measurement R1=<hex>             # admit enclave relay R1 (repeatable)
+      --device-key R1=<hex>                      # ... only from the device provisioned for R1
       [--insecure-dev-attestation R0,R2]         # also admit these non-enclave relays (dev only)
 """
 
@@ -97,8 +102,15 @@ ENCLAVE_MEASUREMENTS: Dict[str, bytes] = {}
 # SHA3-512 of the Security Monitor image. None => SM hash not pinned (the
 # SM is still authenticated through the root-key signature).
 SM_MEASUREMENT: Optional[bytes] = None
-# Ed25519(SHA3) device root key that must endorse the SM.
-ATTESTATION_ROOT_KEY: bytes = keystone_attestation.KEYSTONE_TEST_DEV_PUBLIC_KEY
+# Per-device binding: relay_id -> Ed25519(SHA3) public key (PK_D) of the one
+# device provisioned for that relay. Only that device's root key may endorse
+# the SM in the relay's report. In a deployment this mapping would come from
+# the SDN controller's device inventory; here it is given on the command line.
+DEVICE_KEYS: Dict[str, bytes] = {}
+# LEGACY, image-bound mode (--attestation-root-key): one root key that may
+# endorse the SM for every enclave relay without a device key, i.e. a report
+# from ANY device holding it is accepted. None => off (no fallback).
+ATTESTATION_ROOT_KEY: Optional[bytes] = None
 # Relays allowed to authenticate with the SHA256 dev stand-in report:
 # None => nobody (default), "*" => everybody, else a set of relay_ids.
 DEV_ATTESTATION_RELAYS = None
@@ -546,8 +558,33 @@ def dev_attestation_allowed(relay_id: str) -> bool:
     return DEV_ATTESTATION_RELAYS == "*" or relay_id in DEV_ATTESTATION_RELAYS
 
 
-def verify_attestation(relay_id: str, nonce: bytes, report: str) -> str:
-    """Verify an attestation report; return the platform it proves.
+def device_key_for(relay_id: str) -> bytes:
+    """Root public key the relay's report must chain to (no silent fallback)."""
+    key = DEVICE_KEYS.get(relay_id)
+    if key is not None:
+        return key
+    if ATTESTATION_ROOT_KEY is not None:
+        return ATTESTATION_ROOT_KEY
+    raise AttestationError(f"no device key bound to {relay_id}")
+
+
+def _endorser_hint(raw: bytes, relay_id: str) -> str:
+    """Log-only hint on whose key a rejected report claims to be endorsed by.
+    The report's dev_public_key field is untrusted and never used to decide."""
+    try:
+        claimed = keystone_attestation.KeystoneReport.from_bytes(raw).dev_public_key
+    except AttestationError:
+        return ""
+    for rid, key in DEVICE_KEYS.items():
+        if rid != relay_id and key == claimed:
+            return f" (report claims the device bound to {rid})"
+    if claimed == keystone_attestation.KEYSTONE_TEST_DEV_PUBLIC_KEY:
+        return " (report claims Keystone's public TEST key: device booted without a seed)"
+    return f" (report claims device key {claimed.hex()[:16]}..., bound to no relay)"
+
+
+def verify_attestation(relay_id: str, nonce: bytes, report: str):
+    """Verify an attestation report; return (platform, device key hex or None).
 
     Raises AttestationError on any failure.
     """
@@ -562,7 +599,7 @@ def verify_attestation(relay_id: str, nonce: bytes, report: str) -> str:
             nonce.hex().encode() + relay_id.encode()).hexdigest()
         if not hmac.compare_digest(report, expected):
             raise AttestationError("dev stand-in report mismatch")
-        return "native"
+        return "native", None
 
     expected_measurement = ENCLAVE_MEASUREMENTS.get(relay_id)
     if expected_measurement is None:
@@ -574,21 +611,31 @@ def verify_attestation(relay_id: str, nonce: bytes, report: str) -> str:
 
     # relay.c binds snprintf("%s:%s", relay_id, nonce_hex) into the report
     expected_data = f"{relay_id}:{nonce.hex()}".encode()
-    r = keystone_attestation.verify_report(
-        raw,
-        dev_public_key=ATTESTATION_ROOT_KEY,
-        expected_enclave_hash=expected_measurement,
-        expected_sm_hash=SM_MEASUREMENT,
-        expected_data=expected_data,
-    )
+    device_key = device_key_for(relay_id)
+    try:
+        r = keystone_attestation.verify_report(
+            raw,
+            dev_public_key=device_key,
+            expected_enclave_hash=expected_measurement,
+            expected_sm_hash=SM_MEASUREMENT,
+            expected_data=expected_data,
+        )
+    except AttestationError as e:
+        if str(e).startswith("SM signature invalid"):
+            raise AttestationError(f"{e}{_endorser_hint(raw, relay_id)}") from None
+        raise
+    bound = ("its own device" if relay_id in DEVICE_KEYS
+             else "LEGACY shared root key, device NOT identified")
     print(f"[{relay_id}] Keystone report verified: "
+          f"device key={device_key.hex()[:16]}... ({bound}) "
           f"enclave={r.enclave_hash.hex()[:16]}... sm={r.sm_hash.hex()[:16]}... "
           f"data={expected_data.decode()}")
-    return "riscv"
+    return "riscv", device_key.hex()
 
 
 def save_attestation_evidence(relay_id: str, nonce: bytes, report: str,
-                              platform: Optional[str], error: Optional[str]) -> None:
+                              platform: Optional[str], error: Optional[str],
+                              device_key: Optional[str] = None) -> None:
     """Keep each received attestation report and its verdict (audit trail,
     --attestation-evidence-dir). Reports carry no secrets."""
     if ATTESTATION_EVIDENCE_DIR is None:
@@ -601,6 +648,7 @@ def save_attestation_evidence(relay_id: str, nonce: bytes, report: str,
         "attestation_report": report,
         "verdict": "accepted" if error is None else "rejected",
         "platform": platform,
+        "device_key": device_key,
         "error": error,
     }
     name = f"{now:%Y%m%dT%H%M%S%f}_{relay_id}_{record['verdict']}.json"
@@ -626,9 +674,15 @@ def handle_register(data: dict, ctx: ConnContext) -> dict:
         nonce = os.urandom(32)
         with sessions_lock:
             existing = SESSIONS.get(relay_id)
+            # A device-bound relay that restarts may register again: only
+            # its own device can produce a report that verifies, and a
+            # failed attempt never touches RELAYS. Without a device key the
+            # lock stays, since any device could attest as this relay.
             if existing is not None and existing.authenticated:
-                print(f"[{relay_id}] Refused: relay already admitted")
-                return {"error": "Relay already admitted"}
+                if relay_id not in DEVICE_KEYS:
+                    print(f"[{relay_id}] Refused: relay already admitted")
+                    return {"error": "Relay already admitted"}
+                print(f"[{relay_id}] Re-registration of an admitted, device-bound relay")
             session = RelaySession(relay_id)
             session.nonce = nonce
             session.relay_ip = data.get("relay_ip", "")
@@ -656,8 +710,9 @@ def handle_attest(data: dict, ctx: ConnContext) -> dict:
             return {"error": "No outstanding nonce (register again)"}
 
         try:
-            platform = verify_attestation(relay_id, nonce, attestation_report)
-            save_attestation_evidence(relay_id, nonce, attestation_report, platform, None)
+            platform, device_key = verify_attestation(relay_id, nonce, attestation_report)
+            save_attestation_evidence(relay_id, nonce, attestation_report, platform, None,
+                                      device_key)
         except AttestationError as e:
             save_attestation_evidence(relay_id, nonce, attestation_report, None, str(e))
             print(f"[{relay_id}] Attestation verification failed: {e}")
@@ -922,9 +977,15 @@ parser.add_argument("--enclave-measurement", action="append", default=[], metava
                          "measurement can't be admitted as an enclave relay")
 parser.add_argument("--sm-measurement", default=None, metavar="HEX",
                     help="SHA3-512 measurement of the Keystone Security Monitor (optional pin)")
-parser.add_argument("--attestation-root-key", default=None, metavar="HEX",
-                    help="Ed25519 device root public key (64 hex chars) that must endorse the SM; "
-                         "defaults to Keystone's public TEST key (QEMU only)")
+parser.add_argument("--device-key", action="append", default=[], metavar="ID=HEX",
+                    help="Bind relay ID to the device provisioned for it: that device's "
+                         "Ed25519(SHA3) root public key (64 hex chars, devices/<DEV>.pub), "
+                         "e.g. R1=<hex>; repeat per enclave relay. Required for every "
+                         "--enclave-measurement relay unless --attestation-root-key is given")
+parser.add_argument("--attestation-root-key", default=None, metavar="HEX|test",
+                    help="LEGACY, image-bound: accept, for enclave relays without --device-key, "
+                         "a report endorsed by this root key from ANY device ('test' = "
+                         "Keystone's public TEST key). Off by default")
 parser.add_argument("--insecure-dev-attestation", nargs="?", const="*", default=None,
                     metavar="RELAY_IDS",
                     help="DEV ONLY: accept the SHA256 stand-in report (no TEE) from the given "
@@ -971,11 +1032,50 @@ if len(set(ENCLAVE_MEASUREMENTS.values())) != len(ENCLAVE_MEASUREMENTS):
 if args.sm_measurement:
     SM_MEASUREMENT = _hex_arg(args.sm_measurement, keystone_attestation.MDSIZE, "--sm-measurement")
 if args.attestation_root_key:
-    ATTESTATION_ROOT_KEY = _hex_arg(args.attestation_root_key, keystone_attestation.PUBLIC_KEY_SIZE,
-                                    "--attestation-root-key")
+    ATTESTATION_ROOT_KEY = (keystone_attestation.KEYSTONE_TEST_DEV_PUBLIC_KEY
+                            if args.attestation_root_key == "test" else
+                            _hex_arg(args.attestation_root_key, keystone_attestation.PUBLIC_KEY_SIZE,
+                                     "--attestation-root-key"))
+for pin in args.device_key:
+    pin_id, sep, pin_hex = pin.partition("=")
+    if not sep:
+        print(f"Error: --device-key takes ID=HEX (e.g. R1=<hex>), got {pin!r}")
+        sys.exit(1)
+    if pin_id not in ALLOWED_RELAY_IDS:
+        print(f"Error: --device-key: {pin_id!r} is not one of {', '.join(ALLOWED_RELAY_IDS)}")
+        sys.exit(1)
+    if pin_id in DEVICE_KEYS:
+        print(f"Error: --device-key given twice for {pin_id}")
+        sys.exit(1)
+    key = _hex_arg(pin_hex, keystone_attestation.PUBLIC_KEY_SIZE, f"--device-key {pin_id}")
+    if key == keystone_attestation.KEYSTONE_TEST_DEV_PUBLIC_KEY:
+        print(f"Error: --device-key {pin_id}: that is Keystone's public TEST key, whose secret "
+              f"key is public; it identifies no device")
+        sys.exit(1)
+    DEVICE_KEYS[pin_id] = key
+# One device per role: a shared key would let one device attest as two relays.
+if len(set(DEVICE_KEYS.values())) != len(DEVICE_KEYS):
+    print("Error: two relay IDs share a device key; each relay needs its own device")
+    sys.exit(1)
 if args.insecure_dev_attestation is not None:
     DEV_ATTESTATION_RELAYS = ("*" if args.insecure_dev_attestation == "*" else
                               {r.strip() for r in args.insecure_dev_attestation.split(",") if r.strip()})
+# A relay ID is either an enclave relay or a dev-attested one, never both:
+# otherwise the SHA256 stand-in would bypass its measurement and device key.
+enclave_ids = set(ENCLAVE_MEASUREMENTS) | set(DEVICE_KEYS)
+if DEV_ATTESTATION_RELAYS == "*" and enclave_ids:
+    print("Error: --insecure-dev-attestation without relay IDs would also accept the dev "
+          f"stand-in for enclave relays ({', '.join(sorted(enclave_ids))}); name the dev relays")
+    sys.exit(1)
+if DEV_ATTESTATION_RELAYS not in (None, "*") and DEV_ATTESTATION_RELAYS & enclave_ids:
+    print("Error: relay(s) both enclave-pinned and in --insecure-dev-attestation: "
+          f"{', '.join(sorted(DEV_ATTESTATION_RELAYS & enclave_ids))}")
+    sys.exit(1)
+unbound = sorted(set(ENCLAVE_MEASUREMENTS) - set(DEVICE_KEYS))
+if unbound and ATTESTATION_ROOT_KEY is None:
+    print(f"Error: no --device-key for enclave relay(s) {', '.join(unbound)}; bind each to its "
+          f"device (or pass --attestation-root-key for the legacy image-bound mode)")
+    sys.exit(1)
 
 if args.attestation_evidence_dir:
     ATTESTATION_EVIDENCE_DIR = args.attestation_evidence_dir
@@ -985,9 +1085,17 @@ if not ENCLAVE_MEASUREMENTS:
     print("[!] No --enclave-measurement: enclave relays will be refused")
 for pin_id, pin in ENCLAVE_MEASUREMENTS.items():
     print(f"[*] Pinned enclave measurement for {pin_id}: {pin.hex()}")
-if ATTESTATION_ROOT_KEY == keystone_attestation.KEYSTONE_TEST_DEV_PUBLIC_KEY:
-    print("[!] Attestation root key is Keystone's public TEST key -- "
-          "reports prove nothing outside QEMU")
+for pin_id, key in DEVICE_KEYS.items():
+    print(f"[*] {pin_id} bound to device key {key.hex()} "
+          f"(simulated device: root-key seed is a QEMU host file, not hardware-protected)")
+for pin_id in set(DEVICE_KEYS) - set(ENCLAVE_MEASUREMENTS):
+    print(f"[!] --device-key {pin_id} has no --enclave-measurement: {pin_id} can't be admitted "
+          f"as an enclave relay")
+if unbound:
+    print(f"[!] LEGACY --attestation-root-key for {', '.join(unbound)}: a report from ANY device "
+          f"endorsed by this key is accepted -- attestation is image-bound, not device-bound")
+    if ATTESTATION_ROOT_KEY == keystone_attestation.KEYSTONE_TEST_DEV_PUBLIC_KEY:
+        print("[!] ... and it is Keystone's public TEST key: such reports prove nothing")
 if DEV_ATTESTATION_RELAYS is not None:
     who = "ALL relays" if DEV_ATTESTATION_RELAYS == "*" else ", ".join(sorted(DEV_ATTESTATION_RELAYS))
     print(f"[!] WARNING: --insecure-dev-attestation: non-TEE relays admitted without "

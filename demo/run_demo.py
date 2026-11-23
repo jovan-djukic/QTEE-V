@@ -2,11 +2,17 @@
 """
 QTEE-V demonstration harness (paper §5.4, brief P3).
 
-Runs, unattended, against the Keystone QEMU guest:
+Runs, unattended, against Keystone QEMU guests. Each relay runs in a
+Keystone enclave on its own simulated device: one QEMU instance per relay,
+each booted with its own root-key seed (devices/<DEV>.seed, made by
+tools/make_devices.sh), and the controller binds each relay ID to its
+device's key (--device-key). The seeds are host files: per-device keys,
+but not hardware-protected.
 
-  demo   APP_L -> R0 -> R1 (Keystone enclave) -> R2 -> APP_R with a QKD-derived
-         key on each KME-backed hop. One merged log shows nonce issued, report
-         verified, certificates issued (CN = relay ID), per-hop KME key fetch,
+  demo   APP_L -> R0 -> R1 -> R2 -> APP_R, every relay in an enclave, with a
+         QKD-derived key on each KME-backed hop. One merged log shows nonce
+         issued, report verified under the relay's own device key,
+         certificates issued (CN = relay ID), per-hop KME key fetch,
          ciphertext forwarded and APP_R recovering the payload byte-for-byte.
   test1  peer CN not in whitelist          -> rejected
   test2  certificate from a different CA   -> rejected
@@ -21,7 +27,9 @@ Runs, unattended, against the Keystone QEMU guest:
   test11 impostor with a valid CA-signed cert in a KME's place -> R0 drops the message
   test12 CN that is only part of R1's whitelist string -> rejected
   test13 hop whose decryption key can't be fetched -> R1 drops the message
-  test14 R1's enclave image relabelled as R0 -> no measurement pinned for R0 -> refused
+  test14 R1's enclave image relabelled as R0 -> measurement mismatch -> refused
+  test15 R1's genuine image on R2's device -> not endorsed by R1's device key
+         -> refused; on R1's own device admitted, and again after a restart
 
 Every line in the logs is stamped with the host clock when the harness
 received it ("host time") and tagged with its source; the relays' own
@@ -32,12 +40,16 @@ events across components.
 Usage:
   python3 demo/run_demo.py                 # everything, logs in demo/logs/<timestamp>/
   python3 demo/run_demo.py --only demo test5
-  python3 demo/run_demo.py --host-relays c # R0/R2 as relay.c instead of relay.py
+  python3 demo/run_demo.py --relays py     # LEGACY: only R1 in an enclave, R0/R2
+                                           # as relay.py on the host (dev attestation)
+  python3 demo/run_demo.py --relays c      # LEGACY, R0/R2 as native relay.c
 
-Needs: the Keystone build (README "RISC-V / Keystone"), the KME simulator
-(started here if not running), the native WolfSSL build and ./relay for
---host-relays c. QEMU is started here if the guest isn't reachable, and
-stopped again at the end in that case.
+Needs: the Keystone build (README "RISC-V / Keystone"), devices/ from
+tools/make_devices.sh, the KME simulator (started here if not running), the
+native WolfSSL build, and ./relay for --relays c. A device's QEMU guest is
+started here if its ssh port isn't answering, and stopped again at the end in
+that case; a guest that is already running is reused as is (it must have
+been booted with that device's seed).
 """
 
 import argparse
@@ -62,8 +74,30 @@ GUEST_KEY = os.path.join(KEYSTONE, "build-generic64/overlay/root/.ssh/id-rsa")
 KME_DIR = os.path.join(REPO, "external/next-door-key-simulator")
 GUEST_RELAY_DIR = "/tmp/relay"
 GUEST_TAMPERED_DIR = "/tmp/relay_mod"
-# R1's enclave eapp; its relay ID and port are compiled in (relay.c)
-ENCLAVE_EAPP = "relay-R1"
+DEVICES_DIR = os.path.join(REPO, "devices")
+# Relay -> its simulated device: one QEMU instance per device, with its own
+# root-key seed, ssh port and forwarded relay port (the relay's ID and port
+# are compiled into its eapp, relay-<ID>, so the port is 9000 + index).
+DEVICES = {
+    "R0": {"dev": "DEV-0", "ssh": 9811, "port": 9000},
+    "R1": {"dev": "DEV-1", "ssh": 9821, "port": 9001},
+    "R2": {"dev": "DEV-2", "ssh": 9831, "port": 9002},
+}
+# Physical address of the boot ROM's device secret-key slot (bootrom/
+# sanctum_params.lds), where QEMU places the device's seed before reset.
+DEVICE_SEED_ADDR = "0x801ff040"
+# Relays that run in enclaves; set from --relays in main().
+ENCLAVE_RELAYS = ["R0", "R1", "R2"]
+
+
+def eapp(rid: str) -> str:
+    """The enclave eapp of relay `rid`; its relay ID and port are compiled in."""
+    return f"relay-{rid}"
+
+
+def device_pub(rid: str) -> str:
+    with open(os.path.join(DEVICES_DIR, DEVICES[rid]["dev"] + ".pub")) as f:
+        return f.read().strip()
 DEFAULT_PAYLOAD = "QTEE-V demo payload: application key 3f9a1c07e2b4d8a6 for APP_R"
 
 # Re-exec with the WolfSSL runtime on the loader path: wolfssl_mldsa loads it
@@ -186,86 +220,133 @@ def ensure_kmes():
         sys.exit("KME simulator did not come up on ports 8010-8013")
 
 
-def gssh(cmd: str, timeout: float = 300, input_bytes: bytes = None) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        ["ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=no",
-         "-o", "UserKnownHostsFile=/dev/null", "-o", "LogLevel=ERROR",
-         "-o", "ConnectTimeout=200", "-i", GUEST_KEY, "-p", "9821", "root@localhost", cmd],
-        input=input_bytes, capture_output=True, timeout=timeout)
-
-
-def gssh_cmd(cmd: str):
+def _ssh_args(port: int):
     return ["ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=no",
             "-o", "UserKnownHostsFile=/dev/null", "-o", "LogLevel=ERROR",
-            "-i", GUEST_KEY, "-p", "9821", "root@localhost", cmd]
+            "-i", GUEST_KEY, "-p", str(port)]
 
 
-def guest_up() -> bool:
+def gssh(cmd: str, timeout: float = 300, input_bytes: bytes = None,
+         device: str = "R1") -> subprocess.CompletedProcess:
+    """Run `cmd` in the guest of relay `device`'s simulated device."""
+    return subprocess.run(_ssh_args(DEVICES[device]["ssh"]) + ["-o", "ConnectTimeout=200",
+                                                               "root@localhost", cmd],
+                          input=input_bytes, capture_output=True, timeout=timeout)
+
+
+def gssh_cmd(cmd: str, device: str = "R1"):
+    return _ssh_args(DEVICES[device]["ssh"]) + ["root@localhost", cmd]
+
+
+def guest_up(device: str) -> bool:
     try:
-        return gssh("true", timeout=240).returncode == 0
+        return gssh("true", timeout=240, device=device).returncode == 0
     except subprocess.TimeoutExpired:
         return False
 
 
 class Qemu:
-    def __init__(self, out_dir: str):
-        self.p = None
+    """One QEMU instance per simulated device, booted with that device's seed."""
+
+    def __init__(self, out_dir: str, devices):
+        self.procs = []
         self.out_dir = out_dir
+        self.devices = list(devices)
 
     def ensure(self):
-        if port_open(9821) and guest_up():
-            return
-        print("[*] Booting Keystone QEMU guest (make run)...")
-        self.p = subprocess.Popen(["make", "-C", KEYSTONE, "run"], stdin=subprocess.PIPE,
-                                  stdout=open(os.path.join(self.out_dir, "qemu_console.log"), "w"),
-                                  stderr=subprocess.STDOUT, start_new_session=True)
-        if not wait_until(lambda: port_open(9821) and guest_up(), 600, step=10):
-            sys.exit("QEMU guest did not become reachable over ssh (port 9821)")
+        booting = []
+        for rid in self.devices:
+            d = DEVICES[rid]
+            if port_open(d["ssh"]) and guest_up(rid):
+                print(f"[*] {d['dev']} ({rid}): guest already up on ssh port {d['ssh']}, reusing it")
+                continue
+            seed = os.path.join(DEVICES_DIR, d["dev"] + ".seed")
+            if not os.path.exists(seed):
+                sys.exit(f"{seed} missing: run tools/make_devices.sh")
+            print(f"[*] Booting {d['dev']} for {rid} (QEMU, ssh {d['ssh']}, relay port {d['port']})...")
+            # -snapshot: the instances share rootfs.ext2 and must not write it.
+            extra = (f"-snapshot -device loader,file={seed},addr={DEVICE_SEED_ADDR},force-raw=on")
+            self.procs.append(subprocess.Popen(
+                ["make", "-C", KEYSTONE, "run", f"KEYSTONE_PORT={d['ssh']}",
+                 f"QEMU_RELAY_PORT={d['port']}", "QEMU_SMP=2", f"QEMU_EXTRA={extra}"],
+                stdin=subprocess.PIPE,
+                stdout=open(os.path.join(self.out_dir, f"qemu_console_{d['dev']}.log"), "w"),
+                stderr=subprocess.STDOUT, start_new_session=True))
+            booting.append(rid)
+        for rid in booting:
+            d = DEVICES[rid]
+            if not wait_until(lambda: port_open(d["ssh"]) and guest_up(rid), 900, step=10):
+                sys.exit(f"{d['dev']}'s QEMU guest did not become reachable over ssh (port {d['ssh']})")
 
     def stop_if_started(self):
-        if self.p:
+        for p in self.procs:
             try:
-                os.killpg(self.p.pid, signal.SIGTERM)
+                os.killpg(p.pid, signal.SIGTERM)
             except ProcessLookupError:
                 pass
 
 
-def guest_prepare() -> str:
-    """Load the driver, unpack relay.ke, return the release measurement."""
+def measure(rid: str, device: str, pkg_dir: str = GUEST_RELAY_DIR) -> str:
+    r = gssh(f"cd {pkg_dir} && ./relay-runner {eapp(rid)} eyrie-rt loader.bin --measure", device=device)
+    out = r.stdout.decode().strip().splitlines() if r.stdout else []
+    return out[-1] if out and re.fullmatch(r"[0-9a-f]{128}", out[-1]) else ""
+
+
+def guest_prepare(device: str):
+    """Load the driver and unpack relay.ke in `device`'s guest."""
     r = gssh(f"modprobe keystone-driver; rm -rf {GUEST_RELAY_DIR} {GUEST_TAMPERED_DIR}; "
-             f"/usr/share/keystone/examples/relay.ke --noexec --target {GUEST_RELAY_DIR} >/dev/null && "
-             f"cd {GUEST_RELAY_DIR} && ./relay-runner {ENCLAVE_EAPP} eyrie-rt loader.bin --measure")
-    meas = r.stdout.decode().strip().splitlines()[-1] if r.stdout else ""
-    if r.returncode != 0 or not re.fullmatch(r"[0-9a-f]{128}", meas):
-        sys.exit(f"Could not measure the enclave in the guest:\n{r.stdout.decode()}{r.stderr.decode()}")
+             f"/usr/share/keystone/examples/relay.ke --noexec --target {GUEST_RELAY_DIR} >/dev/null",
+             device=device)
+    if r.returncode != 0:
+        sys.exit(f"Could not unpack relay.ke in {DEVICES[device]['dev']}'s guest:\n"
+                 f"{r.stdout.decode()}{r.stderr.decode()}")
+
+
+def release_measurements() -> dict:
+    """Release measurement of each enclave relay, taken in its own device's
+    guest; checked to be identical on another device (the measurement covers
+    the image, not the device)."""
+    meas = {}
+    for rid in ENCLAVE_RELAYS:
+        meas[rid] = measure(rid, rid)
+        if not meas[rid]:
+            sys.exit(f"Could not measure {eapp(rid)} in {DEVICES[rid]['dev']}'s guest")
+        other = next((o for o in ENCLAVE_RELAYS if o != rid), None)
+        if other and measure(rid, other) != meas[rid]:
+            sys.exit(f"{eapp(rid)} measures differently on {DEVICES[other]['dev']}")
     return meas
 
 
-def guest_kill_relay():
-    gssh("killall relay-runner 2>/dev/null; true", timeout=120)
+def guest_kill_relay(devices=None):
+    for rid in devices or ENCLAVE_RELAYS:
+        gssh("killall relay-runner 2>/dev/null; true", timeout=120, device=rid)
 
 
-def guest_eapp() -> bytes:
-    """The release enclave eapp, as unpacked by guest_prepare."""
-    return gssh(f"cat {GUEST_RELAY_DIR}/{ENCLAVE_EAPP}").stdout
+def guest_eapp(rid: str = "R1") -> bytes:
+    """Relay `rid`'s release enclave eapp, as unpacked by guest_prepare."""
+    return gssh(f"cat {GUEST_RELAY_DIR}/{eapp(rid)}", device=rid).stdout
 
 
-def install_tampered_eapp(image: bytes) -> str:
-    """Copy the release package to GUEST_TAMPERED_DIR with the eapp replaced by
-    `image`; return the measurement of the result."""
+def install_tampered_eapp(image: bytes, rid: str = "R1", device: str = "R1") -> str:
+    """Copy the release package to GUEST_TAMPERED_DIR in `device`'s guest with
+    eapp(rid) replaced by `image`; return the measurement of the result."""
     gssh(f"rm -rf {GUEST_TAMPERED_DIR} && cp -r {GUEST_RELAY_DIR} {GUEST_TAMPERED_DIR} && "
-         f"cat > {GUEST_TAMPERED_DIR}/{ENCLAVE_EAPP} && chmod +x {GUEST_TAMPERED_DIR}/{ENCLAVE_EAPP}",
-         input_bytes=image)
-    m = gssh(f"cd {GUEST_TAMPERED_DIR} && ./relay-runner {ENCLAVE_EAPP} eyrie-rt loader.bin --measure")
-    return m.stdout.decode().strip().splitlines()[-1] if m.stdout else ""
+         f"cat > {GUEST_TAMPERED_DIR}/{eapp(rid)} && chmod +x {GUEST_TAMPERED_DIR}/{eapp(rid)}",
+         input_bytes=image, device=device)
+    return measure(rid, device, GUEST_TAMPERED_DIR)
 
 
 # ==================== Components ====================
 
-def start_controller(log: Log, meas: str, extra, evidence_dir: str) -> Proc:
+def start_controller(log: Log, meas: dict, extra, evidence_dir: str, pin=None) -> Proc:
+    """Controller pinning, for each relay in `pin` (default: every enclave
+    relay), its release measurement and its device's key."""
+    pins = []
+    for rid in (pin or ENCLAVE_RELAYS):
+        pins += ["--enclave-measurement", f"{rid}={meas[rid]}", "--device-key", f"{rid}={device_pub(rid)}"]
     cmd = ["python3", "controller.py",
            "--pqc-ca-cert", "./pqc_ca/ca_certificate.pem", "--pqc-ca-key", "./pqc_ca/ca_private_key.pem",
-           "--enclave-measurement", f"R1={meas}", "--attestation-evidence-dir", evidence_dir] + extra
+           "--attestation-evidence-dir", evidence_dir] + pins + extra
     log.emit("harness", "$ " + " ".join(cmd))
     c = Proc(log, "CTRL", cmd)
     if not c.wait_for(r"WolfSSL TLS controller server on port", 30):
@@ -280,10 +361,15 @@ def start_host_relay(log: Log, idx: int, kind: str) -> Proc:
     return Proc(log, f"R{idx}", cmd)
 
 
-def start_enclave_relay(log: Log, guest_dir: str = GUEST_RELAY_DIR) -> Proc:
-    cmd = f"cd {guest_dir} && ./relay-runner {ENCLAVE_EAPP} eyrie-rt loader.bin 2>&1"
-    log.emit("harness", f"$ (guest) {cmd}")
-    return Proc(log, "R1·enclave", gssh_cmd(cmd))
+def start_enclave_relay(log: Log, guest_dir: str = GUEST_RELAY_DIR, rid: str = "R1",
+                        device: str = None) -> Proc:
+    """Run relay `rid`'s enclave image on `device`'s simulated device
+    (default: its own)."""
+    device = device or rid
+    cmd = f"cd {guest_dir} && ./relay-runner {eapp(rid)} eyrie-rt loader.bin 2>&1"
+    log.emit("harness", f"$ ({DEVICES[device]['dev']} guest) {cmd}")
+    tag = f"{rid}·{DEVICES[device]['dev']}"
+    return Proc(log, tag, gssh_cmd(cmd, device))
 
 
 def route(procs, log: Log):
@@ -356,23 +442,35 @@ def verdict(log: Log, name: str, expected: str, observed: str, ok: bool):
 # ==================== Demo (P3 item 10) ====================
 
 def run_demo(out, meas, host_kind, payload, keep_running=False):
+    enclave_all = host_kind == "enclave"
     log = Log(os.path.join(out, "p3_demo.log"))
-    log.heading("QTEE-V demonstration: APP_L -> R0 -> R1 (Keystone enclave) -> R2 -> APP_R")
+    log.heading("QTEE-V demonstration: APP_L -> R0 -> R1 -> R2 -> APP_R"
+                + (" (all relays in Keystone enclaves)" if enclave_all else " (R1 in a Keystone enclave)"))
     log.note(f"date            : {datetime.now().isoformat(timespec='seconds')}")
-    log.note(f"R1              : relay.c inside a Keystone enclave (QEMU), real attestation")
-    log.note(f"R0, R2          : {'relay.py' if host_kind == 'py' else 'relay.c'} on the host, "
-             f"dev attestation (--insecure-dev-attestation R0,R2)")
-    log.note(f"pinned enclave  : {meas}")
+    for rid in ENCLAVE_RELAYS:
+        log.note(f"{rid}              : relay.c in a Keystone enclave on {DEVICES[rid]['dev']} "
+                 f"(own QEMU instance), bound to device key {device_pub(rid)[:16]}...")
+        log.note(f"pinned {rid}       : {meas[rid]}")
+    if not enclave_all:
+        log.note(f"R0, R2          : {'relay.py' if host_kind == 'py' else 'relay.c'} on the host, "
+                 f"dev attestation (--insecure-dev-attestation R0,R2)")
+    log.note("device keys     : per device, from seed files on the QEMU host (simulated, "
+             "not hardware-protected)")
     log.note(f"payload         : {payload!r} ({len(payload.encode())} bytes)")
     log.note("time column     : host clock at receipt; bracketed times inside lines are each component's own")
     log.heading("Run")
 
     evidence = os.path.join(out, "evidence")
     procs = []
-    ctrl = start_controller(log, meas, ["--insecure-dev-attestation", "R0,R2"], evidence)
+    ctrl = start_controller(log, meas, [] if enclave_all else ["--insecure-dev-attestation", "R0,R2"],
+                            evidence)
     procs.append(ctrl)
-    r0 = start_host_relay(log, 0, host_kind)
-    r2 = start_host_relay(log, 2, host_kind)
+    if enclave_all:
+        r0 = start_enclave_relay(log, rid="R0")
+        r2 = start_enclave_relay(log, rid="R2")
+    else:
+        r0 = start_host_relay(log, 0, host_kind)
+        r2 = start_host_relay(log, 2, host_kind)
     r1 = start_enclave_relay(log)
     procs += [r0, r2, r1]
 
@@ -396,17 +494,22 @@ def run_demo(out, meas, host_kind, payload, keep_running=False):
     def check(desc, ok, detail=""):
         checks.append((desc, bool(ok), detail))
 
-    nonce = ctrl.find(r"\[R1\] Nonce: ([0-9a-f]{64})")
-    ver = ctrl.find(r"\[R1\] Keystone report verified: enclave=([0-9a-f]+)\.\.\. .* data=R1:([0-9a-f]{64})")
-    check("R1: nonce issued by controller", nonce, nonce.group(1) if nonce else "")
-    check("R1: Keystone report verified against pinned measurement",
-          ver and meas.startswith(ver.group(1)), ver.group(0) if ver else "")
-    check("R1: attested data binds R1 and this session's nonce",
-          ver and nonce and ver.group(2) == nonce.group(1))
-    check("R1: admitted as platform=riscv", ctrl.find(r"\[R1\] Authenticated \(platform=riscv\)"))
+    for rid in ENCLAVE_RELAYS:
+        nonce = ctrl.find(rf"\[{rid}\] Nonce: ([0-9a-f]{{64}})")
+        ver = ctrl.find(rf"\[{rid}\] Keystone report verified: device key=([0-9a-f]+)\.\.\. "
+                        rf"\(its own device\) enclave=([0-9a-f]+)\.\.\. .* data={rid}:([0-9a-f]{{64}})")
+        check(f"{rid}: nonce issued by controller", nonce, nonce.group(1) if nonce else "")
+        check(f"{rid}: report endorsed by the key of {DEVICES[rid]['dev']}, the device bound to {rid}",
+              ver and device_pub(rid).startswith(ver.group(1)), ver.group(0) if ver else "")
+        check(f"{rid}: Keystone report verified against pinned measurement",
+              ver and meas[rid].startswith(ver.group(2)))
+        check(f"{rid}: attested data binds {rid} and this session's nonce",
+              ver and nonce and ver.group(3) == nonce.group(1))
+        check(f"{rid}: admitted as platform=riscv", ctrl.find(rf"\[{rid}\] Authenticated \(platform=riscv\)"))
     for rid in ("R0", "R2"):
-        check(f"{rid}: admitted only via dev attestation (platform=native)",
-              ctrl.find(rf"\[{rid}\] Authenticated \(platform=native\)"))
+        if rid not in ENCLAVE_RELAYS:
+            check(f"{rid}: admitted only via dev attestation (platform=native)",
+                  ctrl.find(rf"\[{rid}\] Authenticated \(platform=native\)"))
     for rid in ("R0", "R1", "R2"):
         m = ctrl.find(rf"\[{rid}\] Issued ML-DSA-65 certificate CN=(\S+)")
         check(f"{rid}: certificate issued with CN = relay ID", m and m.group(1) == rid, m.group(0) if m else "")
@@ -421,7 +524,7 @@ def run_demo(out, meas, host_kind, payload, keep_running=False):
     check("hop R1->R2: R1 fetched a QKD key from its KME (link1-start)", enc1, enc1.group(0) if enc1 else "")
     check("hop R1->R2: R2 fetched the same key by ID from the other KME (link1-end)",
           enc1 and dec2 and dec2.group(2) == enc1.group(1), dec2.group(0) if dec2 else "")
-    f0 = r0.find(r"Forwarding ciphertext .* to 127\.0\.0\.1:9001")
+    f0 = r0.find(r"Forwarding ciphertext .* to \S+:9001")
     f1 = r1.find(r"Forwarding ciphertext .* to \S+:9002")
     check("ciphertext forwarded R0 -> R1", f0, f0.group(0) if f0 else "")
     check("ciphertext forwarded R1 -> R2", f1, f1.group(0) if f1 else "")
@@ -433,7 +536,8 @@ def run_demo(out, meas, host_kind, payload, keep_running=False):
     for desc, ok, detail in checks:
         log.note(f"[{'x' if ok else ' '}] {desc}" + (f"\n      {detail}" if detail else ""))
     all_ok = ok_ready and all(ok for _, ok, _ in checks)
-    verdict(log, "demo: end-to-end with R1 in the enclave",
+    verdict(log, "demo: end-to-end, " + ("every relay in an enclave on its own device" if enclave_all
+                                          else "R1 in the enclave"),
             "all evidence items present; APP_R receives the payload byte-for-byte",
             f"{sum(ok for _, ok, _ in checks)}/{len(checks)} evidence items present"
             + ("" if ok_ready else "; relays never became ready"), all_ok)
@@ -613,13 +717,14 @@ One byte of the enclave binary is changed (a string in .rodata: the relay's
 start-up banner), the image is otherwise identical: same Eyrie runtime and
 loader, same Keystone SM and keys. The tampered relay runs as R1 in a real
 enclave; the controller is still pinned to the release measurement.""", expected)
+    meas_r1 = meas["R1"]
     relay_bin = guest_eapp()
     banner = b"QKD Relay (WolfSSL mTLS PQC)"
     i = relay_bin.find(banner)
     tampered = relay_bin[:i] + b"q" + relay_bin[i + 1:]
     log.emit("harness", f"patched byte at offset {i:#x}: {banner[:1]!r} -> b'q' ({len(relay_bin)} byte image)")
     tmeas = install_tampered_eapp(tampered)
-    log.emit("harness", f"release measurement : {meas}")
+    log.emit("harness", f"release measurement : {meas_r1}")
     log.emit("harness", f"tampered measurement: {tmeas}")
     ctrl = start_controller(log, meas, [], os.path.join(out, "evidence_test5"))
     r1 = start_enclave_relay(log, GUEST_TAMPERED_DIR)
@@ -635,34 +740,97 @@ enclave; the controller is still pinned to the release measurement.""", expected
 
 
 def test14_relabelled_image(out, meas):
-    expected = "refused: no enclave measurement pinned for R0; no certificate issued"
-    log = test_log(out, "test14_relabelled_enclave", "R1's enclave image relabelled as R0 -> refused", """
+    r0_enclave = "R0" in ENCLAVE_RELAYS
+    # With R0 an enclave relay, run the relabelled image on R0's own device, so
+    # that the device key matches and only the measurement can refuse it.
+    device = "R0" if r0_enclave else "R1"
+    reason_text = ("enclave measurement mismatch" if r0_enclave
+                   else "no enclave measurement pinned for R0")
+    expected = f"refused: {reason_text}; no certificate issued"
+    log = test_log(out, "test14_relabelled_enclave", "R1's enclave image relabelled as R0 -> refused", f"""
 The relay ID is compiled into the enclave image, so its measurement covers it.
 The host takes R1's release image and changes only the compiled-in ID to R0,
-then runs it in a real enclave. It attests as R0, but the controller pins a
-measurement only for R1, and the relabelled image's measurement differs from
-R1's anyway.""", expected)
+then runs it in a real enclave on {DEVICES[device]['dev']}. It attests as R0, but
+the relabelled image's measurement is not the one pinned for R0
+({'R0 runs its own release image' if r0_enclave else 'no measurement is pinned for R0 at all'}).""",
+                   expected)
     relay_bin = guest_eapp()
     marker = b"relay_id=R1"
     i = relay_bin.find(marker)
     if i < 0 or relay_bin.count(marker) != 1:
-        sys.exit(f"test14: expected one {marker!r} in {ENCLAVE_EAPP}, found {relay_bin.count(marker)}")
+        sys.exit(f"test14: expected one {marker!r} in {eapp('R1')}, found {relay_bin.count(marker)}")
     relabelled = relay_bin[:i] + b"relay_id=R0" + relay_bin[i + len(marker):]
     log.emit("harness", f"patched {marker!r} -> b'relay_id=R0' at offset {i:#x}")
-    rmeas = install_tampered_eapp(relabelled)
-    log.emit("harness", f"release R1 measurement: {meas}")
+    rmeas = install_tampered_eapp(relabelled, "R1", device)
+    log.emit("harness", f"release R1 measurement: {meas['R1']}")
     log.emit("harness", f"relabelled measurement: {rmeas}")
     ctrl = start_controller(log, meas, [], os.path.join(out, "evidence_test14"))
-    r = start_enclave_relay(log, GUEST_TAMPERED_DIR)
+    r = start_enclave_relay(log, GUEST_TAMPERED_DIR, rid="R1", device=device)
     reason = ctrl.wait_for(r"\[R0\] (Attestation verification failed: .*|Authenticated.*)", 600)
     time.sleep(2)
     issued = ctrl.find(r"Issued ML-DSA-65 certificate CN=R0")
     stop_all([ctrl, r])
-    ok = (reason and "no enclave measurement pinned for R0" in reason.group(1)
-          and not issued and rmeas != meas)
+    ok = (reason and reason_text in reason.group(1)
+          and not issued and rmeas != meas["R1"])
     verdict(log, "test14: R1 image relabelled as R0", expected,
             f"controller: {reason.group(1) if reason else 'no attestation seen'}; "
-            f"certificate issued: {bool(issued)}; measurement changed: {rmeas != meas}", bool(ok))
+            f"certificate issued: {bool(issued)}; measurement changed: {rmeas != meas['R1']}", bool(ok))
+    log.close()
+
+
+def test15_other_device(out, meas):
+    expected = ("R1's image on R2's device refused (not endorsed by R1's device key), no certificate; "
+                "on R1's own device admitted; restarted there, admitted again; on R2's device "
+                "after that, still refused")
+    log = test_log(out, "test15_other_device", "R1's genuine image on another genuine device -> refused", f"""
+The controller binds each relay ID to the root key of the device provisioned for
+it (R1 -> {DEVICES['R1']['dev']}, R2 -> {DEVICES['R2']['dev']}). The host runs R1's genuine,
+unmodified release image in a real enclave on {DEVICES['R2']['dev']}, a genuine device
+that is trusted, but for R2. Measurement, nonce and relay ID are all correct;
+only the device is wrong. Control: the same image on {DEVICES['R1']['dev']} is admitted,
+and, after R1 is killed and restarted there, admitted again (a device-bound
+relay may re-register). Finally the image on {DEVICES['R2']['dev']} is tried once more,
+while R1 is admitted: still refused.
+(Device keys are simulated: each QEMU instance is booted with its own seed
+file from the host.)""", expected)
+    if not all(r in ENCLAVE_RELAYS for r in ("R1", "R2")):
+        log.note("SKIPPED: needs R1 and R2 in enclaves (--relays enclave)")
+        print("[SKIP] test15: needs R1 and R2 in enclaves (--relays enclave)")
+        log.close()
+        return
+    ctrl = start_controller(log, meas, [], os.path.join(out, "evidence_test15"))
+    att = r"\[R1\] (Attestation verification failed: .*|Authenticated.*)"
+
+    def attempt(device: str, label: str):
+        mark = len(ctrl.lines)
+        r = start_enclave_relay(log, rid="R1", device=device)
+        line = None
+        end = time.time() + 600
+        while time.time() < end and line is None:
+            line = next((m for m in (re.search(att, l) for l in ctrl.lines[mark:]) if m), None)
+            time.sleep(0.5)
+        time.sleep(2)
+        r.stop()
+        guest_kill_relay([device])
+        outcome = line.group(1) if line else "no attestation seen"
+        log.emit("harness", f"{label}: {outcome}")
+        return outcome
+
+    other = attempt("R2", f"R1 image on {DEVICES['R2']['dev']} (R2's device)")
+    own = attempt("R1", f"R1 image on {DEVICES['R1']['dev']} (its own device)")
+    again = attempt("R1", f"R1 restarted on {DEVICES['R1']['dev']}")
+    other2 = attempt("R2", f"R1 image on {DEVICES['R2']['dev']} again, R1 admitted")
+    reregistered = ctrl.find(r"\[R1\] Re-registration of an admitted, device-bound relay")
+    issued = ctrl.find(r"Issued ML-DSA-65 certificate CN=R1")
+    ctrl.stop()
+    refused = lambda o: ("SM signature invalid" in o and "device bound to R2" in o)
+    ok = (refused(other) and own.startswith("Authenticated") and again.startswith("Authenticated")
+          and bool(reregistered) and refused(other2))
+    verdict(log, "test15: R1's genuine image on another genuine device", expected,
+            f"on R2's device: {other}; on R1's device: {own}; restarted: {again} "
+            f"(re-registration logged: {bool(reregistered)}); on R2's device again: {other2}; "
+            f"certificate for CN=R1 issued: {bool(issued)} (none expected: R0/R2 absent, "
+            f"so configuration never completes)", ok and not issued)
     log.close()
 
 
@@ -677,7 +845,8 @@ R1. Control: the same connection then asks for CN=R0, and then for CN=R0 again
 (one certificate per attestation). Also: a client registers with another entity's
 name, kme-link0-end, which would make its certificate pass as that KME; no nonce
 may be issued.""", expected)
-    ctrl = start_controller(log, meas, ["--insecure-dev-attestation", "R0"], os.path.join(out, "evidence_test6"))
+    ctrl = start_controller(log, meas, ["--insecure-dev-attestation", "R0"], os.path.join(out, "evidence_test6"),
+                            pin=["R1"])
     replies = {}
     try:
         sock, conn = controller_session()
@@ -1033,30 +1202,40 @@ register with it and could be fed a false topology. R1 starts in the enclave."""
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--out", default=os.path.join(REPO, "demo", "logs", datetime.now().strftime("%Y%m%d-%H%M%S")))
-    ap.add_argument("--host-relays", choices=("py", "c"), default="py")
+    ap.add_argument("--relays", choices=("enclave", "py", "c"), default="enclave",
+                    help="enclave: R0, R1, R2 each in an enclave on its own device (default); "
+                         "py / c: LEGACY, only R1 in an enclave, R0/R2 on the host as relay.py / "
+                         "relay.c with dev attestation")
     ap.add_argument("--payload", default=DEFAULT_PAYLOAD)
     tests = ("demo", "test1", "test2", "test3", "test4", "test5", "test6", "test7", "test8",
-             "test9", "test10", "test11", "test12", "test13", "test14")
+             "test9", "test10", "test11", "test12", "test13", "test14", "test15")
     ap.add_argument("--only", nargs="+", choices=tests)
     args = ap.parse_args()
     want = set(args.only or tests)
     if want & {"test1", "test2", "test3", "test4", "test7", "test11", "test12", "test13"}:
         want.add("demo")   # tests 1-3, 7, 11-13 run against the live demo chain; test 4 replays its report
 
+    if args.relays != "enclave":
+        ENCLAVE_RELAYS[:] = ["R1"]
     os.makedirs(args.out, exist_ok=True)
     print(f"[*] Logs: {args.out}")
-    ensure_kmes()
-    qemu = Qemu(args.out)
+    if want & {"demo", "test3", "test9", "test10", "test11"}:
+        ensure_kmes()
+    qemu = Qemu(args.out, ENCLAVE_RELAYS)
     qemu.ensure()
     try:
         guest_kill_relay()
-        meas = guest_prepare()
-        print(f"[*] Release enclave measurement: {meas}")
+        for rid in ENCLAVE_RELAYS:
+            guest_prepare(rid)
+        meas = release_measurements()
+        for rid in ENCLAVE_RELAYS:
+            print(f"[*] {rid}: release measurement {meas[rid][:32]}..., "
+                  f"device {DEVICES[rid]['dev']} key {device_pub(rid)}")
 
         live_tests = [t for t in ("test1", "test2", "test3", "test7", "test11", "test12", "test13") if t in want]
         log = procs = live = None
         if "demo" in want:
-            log, procs, live = run_demo(args.out, meas, args.host_relays, args.payload,
+            log, procs, live = run_demo(args.out, meas, args.relays, args.payload,
                                         keep_running=bool(live_tests))
         if live_tests:
             try:
@@ -1074,6 +1253,7 @@ def main():
         if "test4" in want: test4_replay(args.out, meas)
         if "test5" in want: test5_modified_image(args.out, meas)
         if "test14" in want: test14_relabelled_image(args.out, meas)
+        if "test15" in want: test15_other_device(args.out, meas)
         if "test6" in want: test6_cn(args.out, meas)
         if "test8" in want: test8_fake_controller(args.out)
         if "test9" in want: test9_kme_api(args.out)

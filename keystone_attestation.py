@@ -22,6 +22,11 @@ Report layout (sdk/include/verifier/Report.hpp, little-endian, no padding):
     sm.public_key       32
     sm.signature        64   Ed25519-SHA3 by device root key over sm.hash||sm.public_key
     dev_public_key      32   (informational -- never trusted, the pinned key is used)
+
+The controller passes, as dev_public_key, the root key of the device bound to
+the relay ID (controller.py --device-key), so a report verifies only if it
+comes from that relay's own device. QTEE-V's boot ROM derives each simulated
+device's key from a per-device seed (tools/make_devices.sh).
 """
 
 import hashlib
@@ -41,8 +46,8 @@ REPORT_SIZE = (struct.calcsize(_ENCLAVE_FMT) + struct.calcsize(_SM_FMT)
 
 # Keystone's published TEST device root public key
 # (sdk/include/verifier/test_dev_key.h). The matching secret key is public
-# too, so a report chained to this key proves nothing on real hardware --
-# it is only meaningful for the QEMU demonstration.
+# too, so a report chained to this key proves nothing; the controller refuses
+# it as a device key. A QEMU guest booted without a device seed uses it.
 KEYSTONE_TEST_DEV_PUBLIC_KEY = bytes.fromhex(
     "0faad4ff01178583baa588966f7c1ff32564dd17d7dc2b46cb50a84a69270b4c")
 
