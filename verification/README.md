@@ -23,6 +23,22 @@ The groups can also be run individually with `--group security`,
 `--group reachability`, or `--group regression`. Separate runs overwrite the
 summary with that run's selected group; use `--group all` for the complete artifact.
 
+`--group variants` (not part of `all`) writes to `variants/` and checks the
+model's device-binding assumption, `hw_sk(rid)`, one hardware key per relay
+identity. Both variants are generated from `protocol.pv` by asserted
+substitutions and add a genuine device owned by the adversary that runs R0's
+genuine image and leaks the relay key it obtains (physical memory readout):
+
+| Variant | Root of trust | Expected (and observed with ProVerif 2.05) |
+|---|---|---|
+| `v1_per_device_binding` | each device its own key; controller verifies R0's report under R0's device key only | all 17 security queries true: the adversary's device is rejected |
+| `v2_shared_root_key` | one root key endorses every device; controller accepts any report it signs | `secret_msg`, Q4, Q10 and Q11 false (attacks found); the other 13 true. `secret_msg_reverse` stays secret because relay-to-relay hops carry the QKD layer |
+
+A variant passes when every query has its expected outcome, so V2's attacks
+count as a pass. The implementation matches V1: the controller binds each relay
+ID to its device's key (`--device-key`); under QEMU the device keys come from
+seed files on the host, so they are per-device but not hardware-protected.
+
 ## Changes to the baseline
 
 - Topology lookup now has one common certificate-issuance continuation for all
@@ -115,7 +131,10 @@ genuine CA-signed certificates for other identities. The model repair itself
 changes no runtime code.
 
 Private QKD-key provisioning, hardware-key isolation and the CA remain trust
-assumptions. A private key-source query cannot validate an unmodeled KME channel.
+assumptions. The model collapses Keystone's two-level chain (the device key
+endorses the Security Monitor's key, which signs the report) into one signature
+by `hw_sk(rid)`; that is sound only because the boot ROM now derives the SM key
+from the full device secret key (see the main README, "RISC-V / Keystone"). A private key-source query cannot validate an unmodeled KME channel.
 Unexpected-image behavior is limited to ideal attestation report generation; it
 does not cover hardware compromise, side channels, rollback, invasive attacks or
 compromised approved code. Quantum resistance remains a computational assumption

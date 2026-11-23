@@ -54,6 +54,9 @@ fun pk(skey): pkey.
 fun pkb(pkey): bitstring [data].
 fun sign(bitstring, skey): bitstring.
 fun ok(): bitstring.
+(* Signatures authenticate but do not hide the signed message. *)
+reduc forall m: bitstring, sk: skey;
+    getmess(sign(m, sk)) = m.
 reduc forall m: bitstring, sk: skey;
     verify(sign(m, sk), m, pk(sk)) = ok().
 

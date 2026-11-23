@@ -2,7 +2,7 @@
 
 Proverif 2.05. Cryptographic protocol verifier, by Bruno Blanchet, Vincent Cheval, and Marc Sylvestre
 
-Model SHA-256: `ee12ca7e2f0114ed1a7bff4b6be730e91ab287ba10a95a3750fadf861c201e19`.
+Model SHA-256: `6f530d2d69fd47fbacf37b2e63a57dc9e06f1b56fa17dbd61cf7917e7d2f1ce9`.
 
 All 17 security results are proved under the model assumptions. The suite also
 checks 18 reachability/rejection outcomes and two possession regressions.
@@ -61,4 +61,17 @@ Reproduce from the QTEE-V directory:
 
 ```sh
 python verification/run_verification.py --proverif /path/to/proverif --group all --timeout 120
+```
+
+## Device-binding variants (`--group variants`)
+
+| Variant | Expected | Observed |
+|---|---|---|
+| `v1_per_device_binding` | all 17 security queries true | all 17 true |
+| `v2_shared_root_key` | `secret_msg`, Q4, Q10, Q11 false; other 13 true | as expected: `not attacker(secret_msg[])`, Q4, Q10 and Q11 are false; `secret_msg_reverse` and the rest true |
+
+Inputs, logs and `summary.json` are in `verification/variants/`. Reproduce with:
+
+```sh
+python verification/run_verification.py --proverif /path/to/proverif --group variants
 ```

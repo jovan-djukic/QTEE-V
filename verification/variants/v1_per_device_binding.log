@@ -1,0 +1,1853 @@
+Process 0 (that is, the initial process):
+{1}new ca_sk: skey;
+{2}let ca_pk: pkey = pk(ca_sk) in
+{3}let ca_pkb: bitstring = pkb(ca_pk) in
+{4}out(net, ca_pkb);
+{5}new ctrl_sk: skey;
+{6}out(net, cert_make(ctrl_id,pkb(pk(ctrl_sk)),ca_sk));
+{7}new app_l_sk: skey;
+{8}new app_r_sk: skey;
+{9}let app_l_cert: bitstring = cert_make(APP_L,pkb(pk(app_l_sk)),ca_sk) in
+{10}let app_r_cert: bitstring = cert_make(APP_R,pkb(pk(app_r_sk)),ca_sk) in
+{11}out(net, app_l_cert);
+{12}out(net, app_r_cert);
+{13}out(net, pkb(pk(hw_sk(R0))));
+{14}out(net, pkb(pk(hw_sk(R1))));
+{15}out(net, pkb(pk(hw_sk(R2))));
+{16}out(net, pkb(pk(hw_sk(DEVX))));
+(
+    {17}!
+    {18}let ca_sk_1: skey = ca_sk in
+    {19}let ctrl_sk_1: skey = ctrl_sk in
+    {20}in(net, ek: bitstring);
+    {21}let k: bitstring = adec(ek,ctrl_sk_1) in
+    {22}in(net, reg_m: bitstring);
+    {23}let (=tag_reg,rid: bitstring) = sdec(reg_m,k) in
+    {24}event CtrlGotRegister(rid);
+    {25}new n: bitstring;
+    {26}event CtrlSentNonce(rid,n);
+    {27}out(net, senc((tag_nonce,n),k));
+    {28}in(net, att_m: bitstring);
+    {29}let (=tag_attest,report: bitstring) = sdec(att_m,k) in
+    {30}if (verify(report,(rid,n,meas(rid)),pk(hw_sk(rid))) = ok) then
+    {31}event CtrlGotAttest(rid,n,meas(rid));
+    {32}out(net, senc(tag_authed,k));
+    {33}in(net, cfg_req: bitstring);
+    {34}let (=tag_cfg_req,=rid) = sdec(cfg_req,k) in
+    {35}let left_id: bitstring = left_of(rid) in
+    {36}let right_id: bitstring = right_of(rid) in
+    {37}event CtrlSentCfg(rid,n,left_id,right_id);
+    {38}out(net, senc((tag_cfg,left_id,right_id),k));
+    {39}in(net, csr_m: bitstring);
+    {40}let (=tag_gencrt,relay_pkb: bitstring) = sdec(csr_m,k) in
+    {41}let relay_cert: bitstring = cert_make(rid,relay_pkb,ca_sk_1) in
+    {42}event CtrlIssuedCert(rid,n,meas(rid),relay_pkb);
+    {43}out(net, senc((tag_cert,relay_cert),k))
+) | (
+    {44}!
+    {45}let rid_1: bitstring = R0 in
+    {46}let actual_meas: bitstring = meas(R0) in
+    {47}let ca_pkb_1: bitstring = pkb(ca_pk) in
+    {48}in(net, srv_cert: bitstring);
+    {49}if (cert_ok(srv_cert,ca_pkb_1) = ok) then
+    {50}if (cert_getid(srv_cert) = ctrl_id) then
+    {51}let pkb(ctrl_pk: pkey) = cert_getpk(srv_cert) in
+    {52}new k_1: bitstring;
+    {53}out(net, aenc(k_1,ctrl_pk));
+    {54}out(net, senc((tag_reg,rid_1),k_1));
+    {55}in(net, nonce_m: bitstring);
+    {56}let (=tag_nonce,n_1: bitstring) = sdec(nonce_m,k_1) in
+    {57}event RelaySignedReport(rid_1,n_1,actual_meas);
+    {58}let report_1: bitstring = sign((rid_1,n_1,actual_meas),hw_sk(rid_1)) in
+    {59}out(net, senc((tag_attest,report_1),k_1));
+    {60}in(net, auth_m: bitstring);
+    {61}let auth_tag: bitstring = sdec(auth_m,k_1) in
+    {62}if (auth_tag = tag_authed) then
+    {63}out(net, senc((tag_cfg_req,rid_1),k_1));
+    {64}in(net, cfg_m: bitstring);
+    {65}let (=tag_cfg,left_id_1: bitstring,right_id_1: bitstring) = sdec(cfg_m,k_1) in
+    {66}event RelayLoadedCfg(rid_1,n_1,left_id_1,right_id_1);
+    {67}new relay_sk: skey;
+    {68}let relay_pkb_1: bitstring = pkb(pk(relay_sk)) in
+    {69}out(net, senc((tag_gencrt,relay_pkb_1),k_1));
+    {70}in(net, cert_m: bitstring);
+    {71}let (=tag_cert,relay_cert_1: bitstring) = sdec(cert_m,k_1) in
+    {72}if (cert_ok(relay_cert_1,ca_pkb_1) = ok) then
+    {73}if (cert_getid(relay_cert_1) = rid_1) then
+    {74}if (cert_getpk(relay_cert_1) = relay_pkb_1) then
+    {75}event RelayGotCert(rid_1,n_1,actual_meas,relay_pkb_1);
+    {76}out(net, relay_cert_1);
+    {77}!
+    {78}let relay_sk_1: skey = relay_sk in
+    {79}in(net, (peer_cert: bitstring,ek_1: bitstring));
+    {80}if (cert_ok(peer_cert,ca_pkb_1) = ok) then
+    {81}let peer_id: bitstring = cert_getid(peer_cert) in
+    {82}if ((peer_id = left_id_1) || (peer_id = right_id_1)) then
+    {83}let pkb(peer_pk: pkey) = cert_getpk(peer_cert) in
+    {84}let k_in: bitstring = adec(ek_1,relay_sk_1) in
+    {85}new challenge: bitstring;
+    {86}out(net, senc((tag_hop_challenge,peer_id,rid_1,challenge),k_in));
+    {87}in(net, proof_rx: bitstring);
+    {88}let transcript: bitstring = (tag_hop_proof,peer_id,rid_1,ek_1,challenge) in
+    {89}if (verify(proof_rx,transcript,peer_pk) = ok) then
+    {90}event HopPeerAuthenticated(peer_id,rid_1,ek_1,challenge);
+    {91}in(net, record: bitstring);
+    {92}let (=tag_hop_data,payload: bitstring,=peer_id,=rid_1) = sdec(record,k_in) in
+    {93}let plain: bitstring = (if ((peer_id = APP_L) || (peer_id = APP_R)) then payload else qkd_dec(payload,qkd_k(peer_id,rid_1))) in
+    {94}event RelayGotHop(plain,peer_id,rid_1);
+    {95}let destination: bitstring = (if (peer_id = left_id_1) then right_id_1 else left_id_1) in
+    {96}in(net, fwd_cert: bitstring);
+    {97}if (cert_ok(fwd_cert,ca_pkb_1) = ok) then
+    {98}if (cert_getid(fwd_cert) = destination) then
+    {99}let pkb(fwd_pk: pkey) = cert_getpk(fwd_cert) in
+    {100}new k_out: bitstring;
+    {101}let ek_2: bitstring = aenc(k_out,fwd_pk) in
+    {102}out(net, (relay_cert_1,ek_2));
+    {103}in(net, challenge_m: bitstring);
+    {104}let (=tag_hop_challenge,=rid_1,=destination,challenge_1: bitstring) = sdec(challenge_m,k_out) in
+    {105}let transcript_1: bitstring = (tag_hop_proof,rid_1,destination,ek_2,challenge_1) in
+    {106}event HopSignedTranscript(rid_1,destination,ek_2,challenge_1);
+    {107}out(net, sign(transcript_1,relay_sk_1));
+    {108}let payload_1: bitstring = (if ((destination = APP_L) || (destination = APP_R)) then plain else qkd_enc(plain,qkd_k(rid_1,destination))) in
+    {109}event HopSent(plain,rid_1,destination);
+    {110}event RelaySentHop(plain,rid_1,destination);
+    {111}out(net, senc((tag_hop_data,payload_1,rid_1,destination),k_out))
+) | (
+    {112}!
+    {113}let rid_2: bitstring = R1 in
+    {114}let actual_meas_1: bitstring = meas(R1) in
+    {115}let ca_pkb_2: bitstring = pkb(ca_pk) in
+    {116}in(net, srv_cert_1: bitstring);
+    {117}if (cert_ok(srv_cert_1,ca_pkb_2) = ok) then
+    {118}if (cert_getid(srv_cert_1) = ctrl_id) then
+    {119}let pkb(ctrl_pk_1: pkey) = cert_getpk(srv_cert_1) in
+    {120}new k_2: bitstring;
+    {121}out(net, aenc(k_2,ctrl_pk_1));
+    {122}out(net, senc((tag_reg,rid_2),k_2));
+    {123}in(net, nonce_m_1: bitstring);
+    {124}let (=tag_nonce,n_2: bitstring) = sdec(nonce_m_1,k_2) in
+    {125}event RelaySignedReport(rid_2,n_2,actual_meas_1);
+    {126}let report_2: bitstring = sign((rid_2,n_2,actual_meas_1),hw_sk(rid_2)) in
+    {127}out(net, senc((tag_attest,report_2),k_2));
+    {128}in(net, auth_m_1: bitstring);
+    {129}let auth_tag_1: bitstring = sdec(auth_m_1,k_2) in
+    {130}if (auth_tag_1 = tag_authed) then
+    {131}out(net, senc((tag_cfg_req,rid_2),k_2));
+    {132}in(net, cfg_m_1: bitstring);
+    {133}let (=tag_cfg,left_id_2: bitstring,right_id_2: bitstring) = sdec(cfg_m_1,k_2) in
+    {134}event RelayLoadedCfg(rid_2,n_2,left_id_2,right_id_2);
+    {135}new relay_sk_2: skey;
+    {136}let relay_pkb_2: bitstring = pkb(pk(relay_sk_2)) in
+    {137}out(net, senc((tag_gencrt,relay_pkb_2),k_2));
+    {138}in(net, cert_m_1: bitstring);
+    {139}let (=tag_cert,relay_cert_2: bitstring) = sdec(cert_m_1,k_2) in
+    {140}if (cert_ok(relay_cert_2,ca_pkb_2) = ok) then
+    {141}if (cert_getid(relay_cert_2) = rid_2) then
+    {142}if (cert_getpk(relay_cert_2) = relay_pkb_2) then
+    {143}event RelayGotCert(rid_2,n_2,actual_meas_1,relay_pkb_2);
+    {144}out(net, relay_cert_2);
+    {145}!
+    {146}let relay_sk_3: skey = relay_sk_2 in
+    {147}in(net, (peer_cert_1: bitstring,ek_3: bitstring));
+    {148}if (cert_ok(peer_cert_1,ca_pkb_2) = ok) then
+    {149}let peer_id_1: bitstring = cert_getid(peer_cert_1) in
+    {150}if ((peer_id_1 = left_id_2) || (peer_id_1 = right_id_2)) then
+    {151}let pkb(peer_pk_1: pkey) = cert_getpk(peer_cert_1) in
+    {152}let k_in_1: bitstring = adec(ek_3,relay_sk_3) in
+    {153}new challenge_2: bitstring;
+    {154}out(net, senc((tag_hop_challenge,peer_id_1,rid_2,challenge_2),k_in_1));
+    {155}in(net, proof_rx_1: bitstring);
+    {156}let transcript_2: bitstring = (tag_hop_proof,peer_id_1,rid_2,ek_3,challenge_2) in
+    {157}if (verify(proof_rx_1,transcript_2,peer_pk_1) = ok) then
+    {158}event HopPeerAuthenticated(peer_id_1,rid_2,ek_3,challenge_2);
+    {159}in(net, record_1: bitstring);
+    {160}let (=tag_hop_data,payload_2: bitstring,=peer_id_1,=rid_2) = sdec(record_1,k_in_1) in
+    {161}let plain_1: bitstring = (if ((peer_id_1 = APP_L) || (peer_id_1 = APP_R)) then payload_2 else qkd_dec(payload_2,qkd_k(peer_id_1,rid_2))) in
+    {162}event RelayGotHop(plain_1,peer_id_1,rid_2);
+    {163}let destination_1: bitstring = (if (peer_id_1 = left_id_2) then right_id_2 else left_id_2) in
+    {164}in(net, fwd_cert_1: bitstring);
+    {165}if (cert_ok(fwd_cert_1,ca_pkb_2) = ok) then
+    {166}if (cert_getid(fwd_cert_1) = destination_1) then
+    {167}let pkb(fwd_pk_1: pkey) = cert_getpk(fwd_cert_1) in
+    {168}new k_out_1: bitstring;
+    {169}let ek_4: bitstring = aenc(k_out_1,fwd_pk_1) in
+    {170}out(net, (relay_cert_2,ek_4));
+    {171}in(net, challenge_m_1: bitstring);
+    {172}let (=tag_hop_challenge,=rid_2,=destination_1,challenge_3: bitstring) = sdec(challenge_m_1,k_out_1) in
+    {173}let transcript_3: bitstring = (tag_hop_proof,rid_2,destination_1,ek_4,challenge_3) in
+    {174}event HopSignedTranscript(rid_2,destination_1,ek_4,challenge_3);
+    {175}out(net, sign(transcript_3,relay_sk_3));
+    {176}let payload_3: bitstring = (if ((destination_1 = APP_L) || (destination_1 = APP_R)) then plain_1 else qkd_enc(plain_1,qkd_k(rid_2,destination_1))) in
+    {177}event HopSent(plain_1,rid_2,destination_1);
+    {178}event RelaySentHop(plain_1,rid_2,destination_1);
+    {179}out(net, senc((tag_hop_data,payload_3,rid_2,destination_1),k_out_1))
+) | (
+    {180}!
+    {181}let rid_3: bitstring = R2 in
+    {182}let actual_meas_2: bitstring = meas(R2) in
+    {183}let ca_pkb_3: bitstring = pkb(ca_pk) in
+    {184}in(net, srv_cert_2: bitstring);
+    {185}if (cert_ok(srv_cert_2,ca_pkb_3) = ok) then
+    {186}if (cert_getid(srv_cert_2) = ctrl_id) then
+    {187}let pkb(ctrl_pk_2: pkey) = cert_getpk(srv_cert_2) in
+    {188}new k_3: bitstring;
+    {189}out(net, aenc(k_3,ctrl_pk_2));
+    {190}out(net, senc((tag_reg,rid_3),k_3));
+    {191}in(net, nonce_m_2: bitstring);
+    {192}let (=tag_nonce,n_3: bitstring) = sdec(nonce_m_2,k_3) in
+    {193}event RelaySignedReport(rid_3,n_3,actual_meas_2);
+    {194}let report_3: bitstring = sign((rid_3,n_3,actual_meas_2),hw_sk(rid_3)) in
+    {195}out(net, senc((tag_attest,report_3),k_3));
+    {196}in(net, auth_m_2: bitstring);
+    {197}let auth_tag_2: bitstring = sdec(auth_m_2,k_3) in
+    {198}if (auth_tag_2 = tag_authed) then
+    {199}out(net, senc((tag_cfg_req,rid_3),k_3));
+    {200}in(net, cfg_m_2: bitstring);
+    {201}let (=tag_cfg,left_id_3: bitstring,right_id_3: bitstring) = sdec(cfg_m_2,k_3) in
+    {202}event RelayLoadedCfg(rid_3,n_3,left_id_3,right_id_3);
+    {203}new relay_sk_4: skey;
+    {204}let relay_pkb_3: bitstring = pkb(pk(relay_sk_4)) in
+    {205}out(net, senc((tag_gencrt,relay_pkb_3),k_3));
+    {206}in(net, cert_m_2: bitstring);
+    {207}let (=tag_cert,relay_cert_3: bitstring) = sdec(cert_m_2,k_3) in
+    {208}if (cert_ok(relay_cert_3,ca_pkb_3) = ok) then
+    {209}if (cert_getid(relay_cert_3) = rid_3) then
+    {210}if (cert_getpk(relay_cert_3) = relay_pkb_3) then
+    {211}event RelayGotCert(rid_3,n_3,actual_meas_2,relay_pkb_3);
+    {212}out(net, relay_cert_3);
+    {213}!
+    {214}let relay_sk_5: skey = relay_sk_4 in
+    {215}in(net, (peer_cert_2: bitstring,ek_5: bitstring));
+    {216}if (cert_ok(peer_cert_2,ca_pkb_3) = ok) then
+    {217}let peer_id_2: bitstring = cert_getid(peer_cert_2) in
+    {218}if ((peer_id_2 = left_id_3) || (peer_id_2 = right_id_3)) then
+    {219}let pkb(peer_pk_2: pkey) = cert_getpk(peer_cert_2) in
+    {220}let k_in_2: bitstring = adec(ek_5,relay_sk_5) in
+    {221}new challenge_4: bitstring;
+    {222}out(net, senc((tag_hop_challenge,peer_id_2,rid_3,challenge_4),k_in_2));
+    {223}in(net, proof_rx_2: bitstring);
+    {224}let transcript_4: bitstring = (tag_hop_proof,peer_id_2,rid_3,ek_5,challenge_4) in
+    {225}if (verify(proof_rx_2,transcript_4,peer_pk_2) = ok) then
+    {226}event HopPeerAuthenticated(peer_id_2,rid_3,ek_5,challenge_4);
+    {227}in(net, record_2: bitstring);
+    {228}let (=tag_hop_data,payload_4: bitstring,=peer_id_2,=rid_3) = sdec(record_2,k_in_2) in
+    {229}let plain_2: bitstring = (if ((peer_id_2 = APP_L) || (peer_id_2 = APP_R)) then payload_4 else qkd_dec(payload_4,qkd_k(peer_id_2,rid_3))) in
+    {230}event RelayGotHop(plain_2,peer_id_2,rid_3);
+    {231}let destination_2: bitstring = (if (peer_id_2 = left_id_3) then right_id_3 else left_id_3) in
+    {232}in(net, fwd_cert_2: bitstring);
+    {233}if (cert_ok(fwd_cert_2,ca_pkb_3) = ok) then
+    {234}if (cert_getid(fwd_cert_2) = destination_2) then
+    {235}let pkb(fwd_pk_2: pkey) = cert_getpk(fwd_cert_2) in
+    {236}new k_out_2: bitstring;
+    {237}let ek_6: bitstring = aenc(k_out_2,fwd_pk_2) in
+    {238}out(net, (relay_cert_3,ek_6));
+    {239}in(net, challenge_m_2: bitstring);
+    {240}let (=tag_hop_challenge,=rid_3,=destination_2,challenge_5: bitstring) = sdec(challenge_m_2,k_out_2) in
+    {241}let transcript_5: bitstring = (tag_hop_proof,rid_3,destination_2,ek_6,challenge_5) in
+    {242}event HopSignedTranscript(rid_3,destination_2,ek_6,challenge_5);
+    {243}out(net, sign(transcript_5,relay_sk_5));
+    {244}let payload_5: bitstring = (if ((destination_2 = APP_L) || (destination_2 = APP_R)) then plain_2 else qkd_enc(plain_2,qkd_k(rid_3,destination_2))) in
+    {245}event HopSent(plain_2,rid_3,destination_2);
+    {246}event RelaySentHop(plain_2,rid_3,destination_2);
+    {247}out(net, senc((tag_hop_data,payload_5,rid_3,destination_2),k_out_2))
+) | (
+    {248}!
+    {249}let rid_4: bitstring = R0 in
+    {250}let actual_meas_3: bitstring = bad_meas(R0) in
+    {251}let ca_pkb_4: bitstring = pkb(ca_pk) in
+    {252}in(net, srv_cert_3: bitstring);
+    {253}if (cert_ok(srv_cert_3,ca_pkb_4) = ok) then
+    {254}if (cert_getid(srv_cert_3) = ctrl_id) then
+    {255}let pkb(ctrl_pk_3: pkey) = cert_getpk(srv_cert_3) in
+    {256}new k_4: bitstring;
+    {257}out(net, aenc(k_4,ctrl_pk_3));
+    {258}out(net, senc((tag_reg,rid_4),k_4));
+    {259}in(net, nonce_m_3: bitstring);
+    {260}let (=tag_nonce,n_4: bitstring) = sdec(nonce_m_3,k_4) in
+    {261}event RelaySignedReport(rid_4,n_4,actual_meas_3);
+    {262}let report_4: bitstring = sign((rid_4,n_4,actual_meas_3),hw_sk(rid_4)) in
+    {263}out(net, senc((tag_attest,report_4),k_4));
+    {264}in(net, auth_m_3: bitstring);
+    {265}let auth_tag_3: bitstring = sdec(auth_m_3,k_4) in
+    {266}if (auth_tag_3 = tag_authed) then
+    {267}out(net, senc((tag_cfg_req,rid_4),k_4));
+    {268}in(net, cfg_m_3: bitstring);
+    {269}let (=tag_cfg,left_id_4: bitstring,right_id_4: bitstring) = sdec(cfg_m_3,k_4) in
+    {270}event RelayLoadedCfg(rid_4,n_4,left_id_4,right_id_4);
+    {271}new relay_sk_6: skey;
+    {272}let relay_pkb_4: bitstring = pkb(pk(relay_sk_6)) in
+    {273}out(net, senc((tag_gencrt,relay_pkb_4),k_4));
+    {274}in(net, cert_m_3: bitstring);
+    {275}let (=tag_cert,relay_cert_4: bitstring) = sdec(cert_m_3,k_4) in
+    {276}if (cert_ok(relay_cert_4,ca_pkb_4) = ok) then
+    {277}if (cert_getid(relay_cert_4) = rid_4) then
+    {278}if (cert_getpk(relay_cert_4) = relay_pkb_4) then
+    {279}event RelayGotCert(rid_4,n_4,actual_meas_3,relay_pkb_4);
+    {280}out(net, relay_cert_4);
+    {281}!
+    {282}let relay_sk_7: skey = relay_sk_6 in
+    {283}in(net, (peer_cert_3: bitstring,ek_7: bitstring));
+    {284}if (cert_ok(peer_cert_3,ca_pkb_4) = ok) then
+    {285}let peer_id_3: bitstring = cert_getid(peer_cert_3) in
+    {286}if ((peer_id_3 = left_id_4) || (peer_id_3 = right_id_4)) then
+    {287}let pkb(peer_pk_3: pkey) = cert_getpk(peer_cert_3) in
+    {288}let k_in_3: bitstring = adec(ek_7,relay_sk_7) in
+    {289}new challenge_6: bitstring;
+    {290}out(net, senc((tag_hop_challenge,peer_id_3,rid_4,challenge_6),k_in_3));
+    {291}in(net, proof_rx_3: bitstring);
+    {292}let transcript_6: bitstring = (tag_hop_proof,peer_id_3,rid_4,ek_7,challenge_6) in
+    {293}if (verify(proof_rx_3,transcript_6,peer_pk_3) = ok) then
+    {294}event HopPeerAuthenticated(peer_id_3,rid_4,ek_7,challenge_6);
+    {295}in(net, record_3: bitstring);
+    {296}let (=tag_hop_data,payload_6: bitstring,=peer_id_3,=rid_4) = sdec(record_3,k_in_3) in
+    {297}let plain_3: bitstring = (if ((peer_id_3 = APP_L) || (peer_id_3 = APP_R)) then payload_6 else qkd_dec(payload_6,qkd_k(peer_id_3,rid_4))) in
+    {298}event RelayGotHop(plain_3,peer_id_3,rid_4);
+    {299}let destination_3: bitstring = (if (peer_id_3 = left_id_4) then right_id_4 else left_id_4) in
+    {300}in(net, fwd_cert_3: bitstring);
+    {301}if (cert_ok(fwd_cert_3,ca_pkb_4) = ok) then
+    {302}if (cert_getid(fwd_cert_3) = destination_3) then
+    {303}let pkb(fwd_pk_3: pkey) = cert_getpk(fwd_cert_3) in
+    {304}new k_out_3: bitstring;
+    {305}let ek_8: bitstring = aenc(k_out_3,fwd_pk_3) in
+    {306}out(net, (relay_cert_4,ek_8));
+    {307}in(net, challenge_m_3: bitstring);
+    {308}let (=tag_hop_challenge,=rid_4,=destination_3,challenge_7: bitstring) = sdec(challenge_m_3,k_out_3) in
+    {309}let transcript_7: bitstring = (tag_hop_proof,rid_4,destination_3,ek_8,challenge_7) in
+    {310}event HopSignedTranscript(rid_4,destination_3,ek_8,challenge_7);
+    {311}out(net, sign(transcript_7,relay_sk_7));
+    {312}let payload_7: bitstring = (if ((destination_3 = APP_L) || (destination_3 = APP_R)) then plain_3 else qkd_enc(plain_3,qkd_k(rid_4,destination_3))) in
+    {313}event HopSent(plain_3,rid_4,destination_3);
+    {314}event RelaySentHop(plain_3,rid_4,destination_3);
+    {315}out(net, senc((tag_hop_data,payload_7,rid_4,destination_3),k_out_3))
+) | (
+    {316}!
+    {317}let rid_5: bitstring = R1 in
+    {318}let actual_meas_4: bitstring = bad_meas(R1) in
+    {319}let ca_pkb_5: bitstring = pkb(ca_pk) in
+    {320}in(net, srv_cert_4: bitstring);
+    {321}if (cert_ok(srv_cert_4,ca_pkb_5) = ok) then
+    {322}if (cert_getid(srv_cert_4) = ctrl_id) then
+    {323}let pkb(ctrl_pk_4: pkey) = cert_getpk(srv_cert_4) in
+    {324}new k_5: bitstring;
+    {325}out(net, aenc(k_5,ctrl_pk_4));
+    {326}out(net, senc((tag_reg,rid_5),k_5));
+    {327}in(net, nonce_m_4: bitstring);
+    {328}let (=tag_nonce,n_5: bitstring) = sdec(nonce_m_4,k_5) in
+    {329}event RelaySignedReport(rid_5,n_5,actual_meas_4);
+    {330}let report_5: bitstring = sign((rid_5,n_5,actual_meas_4),hw_sk(rid_5)) in
+    {331}out(net, senc((tag_attest,report_5),k_5));
+    {332}in(net, auth_m_4: bitstring);
+    {333}let auth_tag_4: bitstring = sdec(auth_m_4,k_5) in
+    {334}if (auth_tag_4 = tag_authed) then
+    {335}out(net, senc((tag_cfg_req,rid_5),k_5));
+    {336}in(net, cfg_m_4: bitstring);
+    {337}let (=tag_cfg,left_id_5: bitstring,right_id_5: bitstring) = sdec(cfg_m_4,k_5) in
+    {338}event RelayLoadedCfg(rid_5,n_5,left_id_5,right_id_5);
+    {339}new relay_sk_8: skey;
+    {340}let relay_pkb_5: bitstring = pkb(pk(relay_sk_8)) in
+    {341}out(net, senc((tag_gencrt,relay_pkb_5),k_5));
+    {342}in(net, cert_m_4: bitstring);
+    {343}let (=tag_cert,relay_cert_5: bitstring) = sdec(cert_m_4,k_5) in
+    {344}if (cert_ok(relay_cert_5,ca_pkb_5) = ok) then
+    {345}if (cert_getid(relay_cert_5) = rid_5) then
+    {346}if (cert_getpk(relay_cert_5) = relay_pkb_5) then
+    {347}event RelayGotCert(rid_5,n_5,actual_meas_4,relay_pkb_5);
+    {348}out(net, relay_cert_5);
+    {349}!
+    {350}let relay_sk_9: skey = relay_sk_8 in
+    {351}in(net, (peer_cert_4: bitstring,ek_9: bitstring));
+    {352}if (cert_ok(peer_cert_4,ca_pkb_5) = ok) then
+    {353}let peer_id_4: bitstring = cert_getid(peer_cert_4) in
+    {354}if ((peer_id_4 = left_id_5) || (peer_id_4 = right_id_5)) then
+    {355}let pkb(peer_pk_4: pkey) = cert_getpk(peer_cert_4) in
+    {356}let k_in_4: bitstring = adec(ek_9,relay_sk_9) in
+    {357}new challenge_8: bitstring;
+    {358}out(net, senc((tag_hop_challenge,peer_id_4,rid_5,challenge_8),k_in_4));
+    {359}in(net, proof_rx_4: bitstring);
+    {360}let transcript_8: bitstring = (tag_hop_proof,peer_id_4,rid_5,ek_9,challenge_8) in
+    {361}if (verify(proof_rx_4,transcript_8,peer_pk_4) = ok) then
+    {362}event HopPeerAuthenticated(peer_id_4,rid_5,ek_9,challenge_8);
+    {363}in(net, record_4: bitstring);
+    {364}let (=tag_hop_data,payload_8: bitstring,=peer_id_4,=rid_5) = sdec(record_4,k_in_4) in
+    {365}let plain_4: bitstring = (if ((peer_id_4 = APP_L) || (peer_id_4 = APP_R)) then payload_8 else qkd_dec(payload_8,qkd_k(peer_id_4,rid_5))) in
+    {366}event RelayGotHop(plain_4,peer_id_4,rid_5);
+    {367}let destination_4: bitstring = (if (peer_id_4 = left_id_5) then right_id_5 else left_id_5) in
+    {368}in(net, fwd_cert_4: bitstring);
+    {369}if (cert_ok(fwd_cert_4,ca_pkb_5) = ok) then
+    {370}if (cert_getid(fwd_cert_4) = destination_4) then
+    {371}let pkb(fwd_pk_4: pkey) = cert_getpk(fwd_cert_4) in
+    {372}new k_out_4: bitstring;
+    {373}let ek_10: bitstring = aenc(k_out_4,fwd_pk_4) in
+    {374}out(net, (relay_cert_5,ek_10));
+    {375}in(net, challenge_m_4: bitstring);
+    {376}let (=tag_hop_challenge,=rid_5,=destination_4,challenge_9: bitstring) = sdec(challenge_m_4,k_out_4) in
+    {377}let transcript_9: bitstring = (tag_hop_proof,rid_5,destination_4,ek_10,challenge_9) in
+    {378}event HopSignedTranscript(rid_5,destination_4,ek_10,challenge_9);
+    {379}out(net, sign(transcript_9,relay_sk_9));
+    {380}let payload_9: bitstring = (if ((destination_4 = APP_L) || (destination_4 = APP_R)) then plain_4 else qkd_enc(plain_4,qkd_k(rid_5,destination_4))) in
+    {381}event HopSent(plain_4,rid_5,destination_4);
+    {382}event RelaySentHop(plain_4,rid_5,destination_4);
+    {383}out(net, senc((tag_hop_data,payload_9,rid_5,destination_4),k_out_4))
+) | (
+    {384}!
+    {385}let rid_6: bitstring = R2 in
+    {386}let actual_meas_5: bitstring = bad_meas(R2) in
+    {387}let ca_pkb_6: bitstring = pkb(ca_pk) in
+    {388}in(net, srv_cert_5: bitstring);
+    {389}if (cert_ok(srv_cert_5,ca_pkb_6) = ok) then
+    {390}if (cert_getid(srv_cert_5) = ctrl_id) then
+    {391}let pkb(ctrl_pk_5: pkey) = cert_getpk(srv_cert_5) in
+    {392}new k_6: bitstring;
+    {393}out(net, aenc(k_6,ctrl_pk_5));
+    {394}out(net, senc((tag_reg,rid_6),k_6));
+    {395}in(net, nonce_m_5: bitstring);
+    {396}let (=tag_nonce,n_6: bitstring) = sdec(nonce_m_5,k_6) in
+    {397}event RelaySignedReport(rid_6,n_6,actual_meas_5);
+    {398}let report_6: bitstring = sign((rid_6,n_6,actual_meas_5),hw_sk(rid_6)) in
+    {399}out(net, senc((tag_attest,report_6),k_6));
+    {400}in(net, auth_m_5: bitstring);
+    {401}let auth_tag_5: bitstring = sdec(auth_m_5,k_6) in
+    {402}if (auth_tag_5 = tag_authed) then
+    {403}out(net, senc((tag_cfg_req,rid_6),k_6));
+    {404}in(net, cfg_m_5: bitstring);
+    {405}let (=tag_cfg,left_id_6: bitstring,right_id_6: bitstring) = sdec(cfg_m_5,k_6) in
+    {406}event RelayLoadedCfg(rid_6,n_6,left_id_6,right_id_6);
+    {407}new relay_sk_10: skey;
+    {408}let relay_pkb_6: bitstring = pkb(pk(relay_sk_10)) in
+    {409}out(net, senc((tag_gencrt,relay_pkb_6),k_6));
+    {410}in(net, cert_m_5: bitstring);
+    {411}let (=tag_cert,relay_cert_6: bitstring) = sdec(cert_m_5,k_6) in
+    {412}if (cert_ok(relay_cert_6,ca_pkb_6) = ok) then
+    {413}if (cert_getid(relay_cert_6) = rid_6) then
+    {414}if (cert_getpk(relay_cert_6) = relay_pkb_6) then
+    {415}event RelayGotCert(rid_6,n_6,actual_meas_5,relay_pkb_6);
+    {416}out(net, relay_cert_6);
+    {417}!
+    {418}let relay_sk_11: skey = relay_sk_10 in
+    {419}in(net, (peer_cert_5: bitstring,ek_11: bitstring));
+    {420}if (cert_ok(peer_cert_5,ca_pkb_6) = ok) then
+    {421}let peer_id_5: bitstring = cert_getid(peer_cert_5) in
+    {422}if ((peer_id_5 = left_id_6) || (peer_id_5 = right_id_6)) then
+    {423}let pkb(peer_pk_5: pkey) = cert_getpk(peer_cert_5) in
+    {424}let k_in_5: bitstring = adec(ek_11,relay_sk_11) in
+    {425}new challenge_10: bitstring;
+    {426}out(net, senc((tag_hop_challenge,peer_id_5,rid_6,challenge_10),k_in_5));
+    {427}in(net, proof_rx_5: bitstring);
+    {428}let transcript_10: bitstring = (tag_hop_proof,peer_id_5,rid_6,ek_11,challenge_10) in
+    {429}if (verify(proof_rx_5,transcript_10,peer_pk_5) = ok) then
+    {430}event HopPeerAuthenticated(peer_id_5,rid_6,ek_11,challenge_10);
+    {431}in(net, record_5: bitstring);
+    {432}let (=tag_hop_data,payload_10: bitstring,=peer_id_5,=rid_6) = sdec(record_5,k_in_5) in
+    {433}let plain_5: bitstring = (if ((peer_id_5 = APP_L) || (peer_id_5 = APP_R)) then payload_10 else qkd_dec(payload_10,qkd_k(peer_id_5,rid_6))) in
+    {434}event RelayGotHop(plain_5,peer_id_5,rid_6);
+    {435}let destination_5: bitstring = (if (peer_id_5 = left_id_6) then right_id_6 else left_id_6) in
+    {436}in(net, fwd_cert_5: bitstring);
+    {437}if (cert_ok(fwd_cert_5,ca_pkb_6) = ok) then
+    {438}if (cert_getid(fwd_cert_5) = destination_5) then
+    {439}let pkb(fwd_pk_5: pkey) = cert_getpk(fwd_cert_5) in
+    {440}new k_out_5: bitstring;
+    {441}let ek_12: bitstring = aenc(k_out_5,fwd_pk_5) in
+    {442}out(net, (relay_cert_6,ek_12));
+    {443}in(net, challenge_m_5: bitstring);
+    {444}let (=tag_hop_challenge,=rid_6,=destination_5,challenge_11: bitstring) = sdec(challenge_m_5,k_out_5) in
+    {445}let transcript_11: bitstring = (tag_hop_proof,rid_6,destination_5,ek_12,challenge_11) in
+    {446}event HopSignedTranscript(rid_6,destination_5,ek_12,challenge_11);
+    {447}out(net, sign(transcript_11,relay_sk_11));
+    {448}let payload_11: bitstring = (if ((destination_5 = APP_L) || (destination_5 = APP_R)) then plain_5 else qkd_enc(plain_5,qkd_k(rid_6,destination_5))) in
+    {449}event HopSent(plain_5,rid_6,destination_5);
+    {450}event RelaySentHop(plain_5,rid_6,destination_5);
+    {451}out(net, senc((tag_hop_data,payload_11,rid_6,destination_5),k_out_5))
+) | (
+    {452}!
+    {453}let rid_7: bitstring = R0 in
+    {454}let actual_meas_6: bitstring = meas(R0) in
+    {455}let dev_sk: skey = hw_sk(DEVX) in
+    {456}let ca_pkb_7: bitstring = pkb(ca_pk) in
+    {457}in(net, srv_cert_6: bitstring);
+    {458}if (cert_ok(srv_cert_6,ca_pkb_7) = ok) then
+    {459}if (cert_getid(srv_cert_6) = ctrl_id) then
+    {460}let pkb(ctrl_pk_6: pkey) = cert_getpk(srv_cert_6) in
+    {461}new k_7: bitstring;
+    {462}out(net, aenc(k_7,ctrl_pk_6));
+    {463}out(net, senc((tag_reg,rid_7),k_7));
+    {464}in(net, nonce_m_6: bitstring);
+    {465}let (=tag_nonce,n_7: bitstring) = sdec(nonce_m_6,k_7) in
+    {466}let report_7: bitstring = sign((rid_7,n_7,actual_meas_6),dev_sk) in
+    {467}out(net, senc((tag_attest,report_7),k_7));
+    {468}in(net, auth_m_6: bitstring);
+    {469}let auth_tag_6: bitstring = sdec(auth_m_6,k_7) in
+    {470}if (auth_tag_6 = tag_authed) then
+    {471}out(net, senc((tag_cfg_req,rid_7),k_7));
+    {472}in(net, cfg_m_6: bitstring);
+    {473}let (=tag_cfg,left_id_7: bitstring,right_id_7: bitstring) = sdec(cfg_m_6,k_7) in
+    {474}new relay_sk_12: skey;
+    {475}let relay_pkb_7: bitstring = pkb(pk(relay_sk_12)) in
+    {476}out(net, senc((tag_gencrt,relay_pkb_7),k_7));
+    {477}in(net, cert_m_6: bitstring);
+    {478}let (=tag_cert,relay_cert_7: bitstring) = sdec(cert_m_6,k_7) in
+    {479}out(net, relay_cert_7);
+    {480}out(net, relay_sk_12)
+) | (
+    {481}let app_id: bitstring = APP_L in
+    {482}let neighbor: bitstring = R0 in
+    {483}let message: bitstring = secret_msg in
+    {484}let app_sk: skey = app_l_sk in
+    {485}in(net, relay_cert_8: bitstring);
+    {486}if (cert_ok(relay_cert_8,ca_pkb) = ok) then
+    {487}if (cert_getid(relay_cert_8) = neighbor) then
+    {488}let pkb(relay_pk: pkey) = cert_getpk(relay_cert_8) in
+    {489}new k_8: bitstring;
+    {490}let ek_13: bitstring = aenc(k_8,relay_pk) in
+    {491}out(net, (app_l_cert,ek_13));
+    {492}in(net, challenge_m_6: bitstring);
+    {493}let (=tag_hop_challenge,=app_id,=neighbor,challenge_12: bitstring) = sdec(challenge_m_6,k_8) in
+    {494}let transcript_12: bitstring = (tag_hop_proof,app_id,neighbor,ek_13,challenge_12) in
+    {495}event HopSignedTranscript(app_id,neighbor,ek_13,challenge_12);
+    {496}out(net, sign(transcript_12,app_sk));
+    {497}event AppSubmitted(message,app_id,neighbor);
+    {498}event HopSent(message,app_id,neighbor);
+    {499}out(net, senc((tag_hop_data,message,app_id,neighbor),k_8))
+) | (
+    {500}let app_id_1: bitstring = APP_R in
+    {501}let neighbor_1: bitstring = R2 in
+    {502}let message_1: bitstring = secret_msg_reverse in
+    {503}let app_sk_1: skey = app_r_sk in
+    {504}in(net, relay_cert_9: bitstring);
+    {505}if (cert_ok(relay_cert_9,ca_pkb) = ok) then
+    {506}if (cert_getid(relay_cert_9) = neighbor_1) then
+    {507}let pkb(relay_pk_1: pkey) = cert_getpk(relay_cert_9) in
+    {508}new k_9: bitstring;
+    {509}let ek_14: bitstring = aenc(k_9,relay_pk_1) in
+    {510}out(net, (app_r_cert,ek_14));
+    {511}in(net, challenge_m_7: bitstring);
+    {512}let (=tag_hop_challenge,=app_id_1,=neighbor_1,challenge_13: bitstring) = sdec(challenge_m_7,k_9) in
+    {513}let transcript_13: bitstring = (tag_hop_proof,app_id_1,neighbor_1,ek_14,challenge_13) in
+    {514}event HopSignedTranscript(app_id_1,neighbor_1,ek_14,challenge_13);
+    {515}out(net, sign(transcript_13,app_sk_1));
+    {516}event AppSubmitted(message_1,app_id_1,neighbor_1);
+    {517}event HopSent(message_1,app_id_1,neighbor_1);
+    {518}out(net, senc((tag_hop_data,message_1,app_id_1,neighbor_1),k_9))
+) | (
+    {519}!
+    {520}let app_id_2: bitstring = APP_L in
+    {521}let neighbor_2: bitstring = R0 in
+    {522}let app_sk_2: skey = app_l_sk in
+    {523}in(net, (peer_cert_6: bitstring,ek_15: bitstring));
+    {524}if (cert_ok(peer_cert_6,ca_pkb) = ok) then
+    {525}if (cert_getid(peer_cert_6) = neighbor_2) then
+    {526}let pkb(peer_pk_6: pkey) = cert_getpk(peer_cert_6) in
+    {527}let k_10: bitstring = adec(ek_15,app_sk_2) in
+    {528}new challenge_14: bitstring;
+    {529}out(net, senc((tag_hop_challenge,neighbor_2,app_id_2,challenge_14),k_10));
+    {530}in(net, proof_rx_6: bitstring);
+    {531}let transcript_14: bitstring = (tag_hop_proof,neighbor_2,app_id_2,ek_15,challenge_14) in
+    {532}if (verify(proof_rx_6,transcript_14,peer_pk_6) = ok) then
+    {533}event HopPeerAuthenticated(neighbor_2,app_id_2,ek_15,challenge_14);
+    {534}in(net, record_6: bitstring);
+    {535}let (=tag_hop_data,plain_6: bitstring,=neighbor_2,=app_id_2) = sdec(record_6,k_10) in
+    {536}event AppDelivered(plain_6,neighbor_2,app_id_2)
+) | (
+    {537}!
+    {538}let app_id_3: bitstring = APP_R in
+    {539}let neighbor_3: bitstring = R2 in
+    {540}let app_sk_3: skey = app_r_sk in
+    {541}in(net, (peer_cert_7: bitstring,ek_16: bitstring));
+    {542}if (cert_ok(peer_cert_7,ca_pkb) = ok) then
+    {543}if (cert_getid(peer_cert_7) = neighbor_3) then
+    {544}let pkb(peer_pk_7: pkey) = cert_getpk(peer_cert_7) in
+    {545}let k_11: bitstring = adec(ek_16,app_sk_3) in
+    {546}new challenge_15: bitstring;
+    {547}out(net, senc((tag_hop_challenge,neighbor_3,app_id_3,challenge_15),k_11));
+    {548}in(net, proof_rx_7: bitstring);
+    {549}let transcript_15: bitstring = (tag_hop_proof,neighbor_3,app_id_3,ek_16,challenge_15) in
+    {550}if (verify(proof_rx_7,transcript_15,peer_pk_7) = ok) then
+    {551}event HopPeerAuthenticated(neighbor_3,app_id_3,ek_16,challenge_15);
+    {552}in(net, record_7: bitstring);
+    {553}let (=tag_hop_data,plain_7: bitstring,=neighbor_3,=app_id_3) = sdec(record_7,k_11) in
+    {554}event AppDelivered(plain_7,neighbor_3,app_id_3)
+)
+
+--  Process 1 (that is, process 0, with let moved downwards):
+{1}new ca_sk: skey;
+{2}let ca_pk: pkey = pk(ca_sk) in
+{3}let ca_pkb: bitstring = pkb(ca_pk) in
+{4}out(net, ca_pkb);
+{5}new ctrl_sk: skey;
+{6}out(net, cert_make(ctrl_id,pkb(pk(ctrl_sk)),ca_sk));
+{7}new app_l_sk: skey;
+{8}new app_r_sk: skey;
+{9}let app_l_cert: bitstring = cert_make(APP_L,pkb(pk(app_l_sk)),ca_sk) in
+{11}out(net, app_l_cert);
+{10}let app_r_cert: bitstring = cert_make(APP_R,pkb(pk(app_r_sk)),ca_sk) in
+{12}out(net, app_r_cert);
+{13}out(net, pkb(pk(hw_sk(R0))));
+{14}out(net, pkb(pk(hw_sk(R1))));
+{15}out(net, pkb(pk(hw_sk(R2))));
+{16}out(net, pkb(pk(hw_sk(DEVX))));
+(
+    {17}!
+    {20}in(net, ek: bitstring);
+    {19}let ctrl_sk_1: skey = ctrl_sk in
+    {21}let k: bitstring = adec(ek,ctrl_sk_1) in
+    {22}in(net, reg_m: bitstring);
+    {23}let (=tag_reg,rid: bitstring) = sdec(reg_m,k) in
+    {24}event CtrlGotRegister(rid);
+    {25}new n: bitstring;
+    {26}event CtrlSentNonce(rid,n);
+    {27}out(net, senc((tag_nonce,n),k));
+    {28}in(net, att_m: bitstring);
+    {29}let (=tag_attest,report: bitstring) = sdec(att_m,k) in
+    {30}if (verify(report,(rid,n,meas(rid)),pk(hw_sk(rid))) = ok) then
+    {31}event CtrlGotAttest(rid,n,meas(rid));
+    {32}out(net, senc(tag_authed,k));
+    {33}in(net, cfg_req: bitstring);
+    {34}let (=tag_cfg_req,=rid) = sdec(cfg_req,k) in
+    {35}let left_id: bitstring = left_of(rid) in
+    {36}let right_id: bitstring = right_of(rid) in
+    {37}event CtrlSentCfg(rid,n,left_id,right_id);
+    {38}out(net, senc((tag_cfg,left_id,right_id),k));
+    {39}in(net, csr_m: bitstring);
+    {40}let (=tag_gencrt,relay_pkb: bitstring) = sdec(csr_m,k) in
+    {42}event CtrlIssuedCert(rid,n,meas(rid),relay_pkb);
+    {18}let ca_sk_1: skey = ca_sk in
+    {41}let relay_cert: bitstring = cert_make(rid,relay_pkb,ca_sk_1) in
+    {43}out(net, senc((tag_cert,relay_cert),k))
+) | (
+    {44}!
+    {48}in(net, srv_cert: bitstring);
+    {47}let ca_pkb_1: bitstring = pkb(ca_pk) in
+    {49}if (cert_ok(srv_cert,ca_pkb_1) = ok) then
+    {50}if (cert_getid(srv_cert) = ctrl_id) then
+    {51}let pkb(ctrl_pk: pkey) = cert_getpk(srv_cert) in
+    {52}new k_1: bitstring;
+    {53}out(net, aenc(k_1,ctrl_pk));
+    {45}let rid_1: bitstring = R0 in
+    {54}out(net, senc((tag_reg,rid_1),k_1));
+    {55}in(net, nonce_m: bitstring);
+    {56}let (=tag_nonce,n_1: bitstring) = sdec(nonce_m,k_1) in
+    {46}let actual_meas: bitstring = meas(R0) in
+    {57}event RelaySignedReport(rid_1,n_1,actual_meas);
+    {58}let report_1: bitstring = sign((rid_1,n_1,actual_meas),hw_sk(rid_1)) in
+    {59}out(net, senc((tag_attest,report_1),k_1));
+    {60}in(net, auth_m: bitstring);
+    {61}let auth_tag: bitstring = sdec(auth_m,k_1) in
+    {62}if (auth_tag = tag_authed) then
+    {63}out(net, senc((tag_cfg_req,rid_1),k_1));
+    {64}in(net, cfg_m: bitstring);
+    {65}let (=tag_cfg,left_id_1: bitstring,right_id_1: bitstring) = sdec(cfg_m,k_1) in
+    {66}event RelayLoadedCfg(rid_1,n_1,left_id_1,right_id_1);
+    {67}new relay_sk: skey;
+    {68}let relay_pkb_1: bitstring = pkb(pk(relay_sk)) in
+    {69}out(net, senc((tag_gencrt,relay_pkb_1),k_1));
+    {70}in(net, cert_m: bitstring);
+    {71}let (=tag_cert,relay_cert_1: bitstring) = sdec(cert_m,k_1) in
+    {72}if (cert_ok(relay_cert_1,ca_pkb_1) = ok) then
+    {73}if (cert_getid(relay_cert_1) = rid_1) then
+    {74}if (cert_getpk(relay_cert_1) = relay_pkb_1) then
+    {75}event RelayGotCert(rid_1,n_1,actual_meas,relay_pkb_1);
+    {76}out(net, relay_cert_1);
+    {77}!
+    {79}in(net, (peer_cert: bitstring,ek_1: bitstring));
+    {80}if (cert_ok(peer_cert,ca_pkb_1) = ok) then
+    {81}let peer_id: bitstring = cert_getid(peer_cert) in
+    {82}if ((peer_id = left_id_1) || (peer_id = right_id_1)) then
+    {83}let pkb(peer_pk: pkey) = cert_getpk(peer_cert) in
+    {78}let relay_sk_1: skey = relay_sk in
+    {84}let k_in: bitstring = adec(ek_1,relay_sk_1) in
+    {85}new challenge: bitstring;
+    {86}out(net, senc((tag_hop_challenge,peer_id,rid_1,challenge),k_in));
+    {87}in(net, proof_rx: bitstring);
+    {88}let transcript: bitstring = (tag_hop_proof,peer_id,rid_1,ek_1,challenge) in
+    {89}if (verify(proof_rx,transcript,peer_pk) = ok) then
+    {90}event HopPeerAuthenticated(peer_id,rid_1,ek_1,challenge);
+    {91}in(net, record: bitstring);
+    {92}let (=tag_hop_data,payload: bitstring,=peer_id,=rid_1) = sdec(record,k_in) in
+    {93}let plain: bitstring = (if ((peer_id = APP_L) || (peer_id = APP_R)) then payload else qkd_dec(payload,qkd_k(peer_id,rid_1))) in
+    {94}event RelayGotHop(plain,peer_id,rid_1);
+    {96}in(net, fwd_cert: bitstring);
+    {97}if (cert_ok(fwd_cert,ca_pkb_1) = ok) then
+    {95}let destination: bitstring = (if (peer_id = left_id_1) then right_id_1 else left_id_1) in
+    {98}if (cert_getid(fwd_cert) = destination) then
+    {99}let pkb(fwd_pk: pkey) = cert_getpk(fwd_cert) in
+    {100}new k_out: bitstring;
+    {101}let ek_2: bitstring = aenc(k_out,fwd_pk) in
+    {102}out(net, (relay_cert_1,ek_2));
+    {103}in(net, challenge_m: bitstring);
+    {104}let (=tag_hop_challenge,=rid_1,=destination,challenge_1: bitstring) = sdec(challenge_m,k_out) in
+    {106}event HopSignedTranscript(rid_1,destination,ek_2,challenge_1);
+    {105}let transcript_1: bitstring = (tag_hop_proof,rid_1,destination,ek_2,challenge_1) in
+    {107}out(net, sign(transcript_1,relay_sk_1));
+    {109}event HopSent(plain,rid_1,destination);
+    {110}event RelaySentHop(plain,rid_1,destination);
+    {108}let payload_1: bitstring = (if ((destination = APP_L) || (destination = APP_R)) then plain else qkd_enc(plain,qkd_k(rid_1,destination))) in
+    {111}out(net, senc((tag_hop_data,payload_1,rid_1,destination),k_out))
+) | (
+    {112}!
+    {116}in(net, srv_cert_1: bitstring);
+    {115}let ca_pkb_2: bitstring = pkb(ca_pk) in
+    {117}if (cert_ok(srv_cert_1,ca_pkb_2) = ok) then
+    {118}if (cert_getid(srv_cert_1) = ctrl_id) then
+    {119}let pkb(ctrl_pk_1: pkey) = cert_getpk(srv_cert_1) in
+    {120}new k_2: bitstring;
+    {121}out(net, aenc(k_2,ctrl_pk_1));
+    {113}let rid_2: bitstring = R1 in
+    {122}out(net, senc((tag_reg,rid_2),k_2));
+    {123}in(net, nonce_m_1: bitstring);
+    {124}let (=tag_nonce,n_2: bitstring) = sdec(nonce_m_1,k_2) in
+    {114}let actual_meas_1: bitstring = meas(R1) in
+    {125}event RelaySignedReport(rid_2,n_2,actual_meas_1);
+    {126}let report_2: bitstring = sign((rid_2,n_2,actual_meas_1),hw_sk(rid_2)) in
+    {127}out(net, senc((tag_attest,report_2),k_2));
+    {128}in(net, auth_m_1: bitstring);
+    {129}let auth_tag_1: bitstring = sdec(auth_m_1,k_2) in
+    {130}if (auth_tag_1 = tag_authed) then
+    {131}out(net, senc((tag_cfg_req,rid_2),k_2));
+    {132}in(net, cfg_m_1: bitstring);
+    {133}let (=tag_cfg,left_id_2: bitstring,right_id_2: bitstring) = sdec(cfg_m_1,k_2) in
+    {134}event RelayLoadedCfg(rid_2,n_2,left_id_2,right_id_2);
+    {135}new relay_sk_2: skey;
+    {136}let relay_pkb_2: bitstring = pkb(pk(relay_sk_2)) in
+    {137}out(net, senc((tag_gencrt,relay_pkb_2),k_2));
+    {138}in(net, cert_m_1: bitstring);
+    {139}let (=tag_cert,relay_cert_2: bitstring) = sdec(cert_m_1,k_2) in
+    {140}if (cert_ok(relay_cert_2,ca_pkb_2) = ok) then
+    {141}if (cert_getid(relay_cert_2) = rid_2) then
+    {142}if (cert_getpk(relay_cert_2) = relay_pkb_2) then
+    {143}event RelayGotCert(rid_2,n_2,actual_meas_1,relay_pkb_2);
+    {144}out(net, relay_cert_2);
+    {145}!
+    {147}in(net, (peer_cert_1: bitstring,ek_3: bitstring));
+    {148}if (cert_ok(peer_cert_1,ca_pkb_2) = ok) then
+    {149}let peer_id_1: bitstring = cert_getid(peer_cert_1) in
+    {150}if ((peer_id_1 = left_id_2) || (peer_id_1 = right_id_2)) then
+    {151}let pkb(peer_pk_1: pkey) = cert_getpk(peer_cert_1) in
+    {146}let relay_sk_3: skey = relay_sk_2 in
+    {152}let k_in_1: bitstring = adec(ek_3,relay_sk_3) in
+    {153}new challenge_2: bitstring;
+    {154}out(net, senc((tag_hop_challenge,peer_id_1,rid_2,challenge_2),k_in_1));
+    {155}in(net, proof_rx_1: bitstring);
+    {156}let transcript_2: bitstring = (tag_hop_proof,peer_id_1,rid_2,ek_3,challenge_2) in
+    {157}if (verify(proof_rx_1,transcript_2,peer_pk_1) = ok) then
+    {158}event HopPeerAuthenticated(peer_id_1,rid_2,ek_3,challenge_2);
+    {159}in(net, record_1: bitstring);
+    {160}let (=tag_hop_data,payload_2: bitstring,=peer_id_1,=rid_2) = sdec(record_1,k_in_1) in
+    {161}let plain_1: bitstring = (if ((peer_id_1 = APP_L) || (peer_id_1 = APP_R)) then payload_2 else qkd_dec(payload_2,qkd_k(peer_id_1,rid_2))) in
+    {162}event RelayGotHop(plain_1,peer_id_1,rid_2);
+    {164}in(net, fwd_cert_1: bitstring);
+    {165}if (cert_ok(fwd_cert_1,ca_pkb_2) = ok) then
+    {163}let destination_1: bitstring = (if (peer_id_1 = left_id_2) then right_id_2 else left_id_2) in
+    {166}if (cert_getid(fwd_cert_1) = destination_1) then
+    {167}let pkb(fwd_pk_1: pkey) = cert_getpk(fwd_cert_1) in
+    {168}new k_out_1: bitstring;
+    {169}let ek_4: bitstring = aenc(k_out_1,fwd_pk_1) in
+    {170}out(net, (relay_cert_2,ek_4));
+    {171}in(net, challenge_m_1: bitstring);
+    {172}let (=tag_hop_challenge,=rid_2,=destination_1,challenge_3: bitstring) = sdec(challenge_m_1,k_out_1) in
+    {174}event HopSignedTranscript(rid_2,destination_1,ek_4,challenge_3);
+    {173}let transcript_3: bitstring = (tag_hop_proof,rid_2,destination_1,ek_4,challenge_3) in
+    {175}out(net, sign(transcript_3,relay_sk_3));
+    {177}event HopSent(plain_1,rid_2,destination_1);
+    {178}event RelaySentHop(plain_1,rid_2,destination_1);
+    {176}let payload_3: bitstring = (if ((destination_1 = APP_L) || (destination_1 = APP_R)) then plain_1 else qkd_enc(plain_1,qkd_k(rid_2,destination_1))) in
+    {179}out(net, senc((tag_hop_data,payload_3,rid_2,destination_1),k_out_1))
+) | (
+    {180}!
+    {184}in(net, srv_cert_2: bitstring);
+    {183}let ca_pkb_3: bitstring = pkb(ca_pk) in
+    {185}if (cert_ok(srv_cert_2,ca_pkb_3) = ok) then
+    {186}if (cert_getid(srv_cert_2) = ctrl_id) then
+    {187}let pkb(ctrl_pk_2: pkey) = cert_getpk(srv_cert_2) in
+    {188}new k_3: bitstring;
+    {189}out(net, aenc(k_3,ctrl_pk_2));
+    {181}let rid_3: bitstring = R2 in
+    {190}out(net, senc((tag_reg,rid_3),k_3));
+    {191}in(net, nonce_m_2: bitstring);
+    {192}let (=tag_nonce,n_3: bitstring) = sdec(nonce_m_2,k_3) in
+    {182}let actual_meas_2: bitstring = meas(R2) in
+    {193}event RelaySignedReport(rid_3,n_3,actual_meas_2);
+    {194}let report_3: bitstring = sign((rid_3,n_3,actual_meas_2),hw_sk(rid_3)) in
+    {195}out(net, senc((tag_attest,report_3),k_3));
+    {196}in(net, auth_m_2: bitstring);
+    {197}let auth_tag_2: bitstring = sdec(auth_m_2,k_3) in
+    {198}if (auth_tag_2 = tag_authed) then
+    {199}out(net, senc((tag_cfg_req,rid_3),k_3));
+    {200}in(net, cfg_m_2: bitstring);
+    {201}let (=tag_cfg,left_id_3: bitstring,right_id_3: bitstring) = sdec(cfg_m_2,k_3) in
+    {202}event RelayLoadedCfg(rid_3,n_3,left_id_3,right_id_3);
+    {203}new relay_sk_4: skey;
+    {204}let relay_pkb_3: bitstring = pkb(pk(relay_sk_4)) in
+    {205}out(net, senc((tag_gencrt,relay_pkb_3),k_3));
+    {206}in(net, cert_m_2: bitstring);
+    {207}let (=tag_cert,relay_cert_3: bitstring) = sdec(cert_m_2,k_3) in
+    {208}if (cert_ok(relay_cert_3,ca_pkb_3) = ok) then
+    {209}if (cert_getid(relay_cert_3) = rid_3) then
+    {210}if (cert_getpk(relay_cert_3) = relay_pkb_3) then
+    {211}event RelayGotCert(rid_3,n_3,actual_meas_2,relay_pkb_3);
+    {212}out(net, relay_cert_3);
+    {213}!
+    {215}in(net, (peer_cert_2: bitstring,ek_5: bitstring));
+    {216}if (cert_ok(peer_cert_2,ca_pkb_3) = ok) then
+    {217}let peer_id_2: bitstring = cert_getid(peer_cert_2) in
+    {218}if ((peer_id_2 = left_id_3) || (peer_id_2 = right_id_3)) then
+    {219}let pkb(peer_pk_2: pkey) = cert_getpk(peer_cert_2) in
+    {214}let relay_sk_5: skey = relay_sk_4 in
+    {220}let k_in_2: bitstring = adec(ek_5,relay_sk_5) in
+    {221}new challenge_4: bitstring;
+    {222}out(net, senc((tag_hop_challenge,peer_id_2,rid_3,challenge_4),k_in_2));
+    {223}in(net, proof_rx_2: bitstring);
+    {224}let transcript_4: bitstring = (tag_hop_proof,peer_id_2,rid_3,ek_5,challenge_4) in
+    {225}if (verify(proof_rx_2,transcript_4,peer_pk_2) = ok) then
+    {226}event HopPeerAuthenticated(peer_id_2,rid_3,ek_5,challenge_4);
+    {227}in(net, record_2: bitstring);
+    {228}let (=tag_hop_data,payload_4: bitstring,=peer_id_2,=rid_3) = sdec(record_2,k_in_2) in
+    {229}let plain_2: bitstring = (if ((peer_id_2 = APP_L) || (peer_id_2 = APP_R)) then payload_4 else qkd_dec(payload_4,qkd_k(peer_id_2,rid_3))) in
+    {230}event RelayGotHop(plain_2,peer_id_2,rid_3);
+    {232}in(net, fwd_cert_2: bitstring);
+    {233}if (cert_ok(fwd_cert_2,ca_pkb_3) = ok) then
+    {231}let destination_2: bitstring = (if (peer_id_2 = left_id_3) then right_id_3 else left_id_3) in
+    {234}if (cert_getid(fwd_cert_2) = destination_2) then
+    {235}let pkb(fwd_pk_2: pkey) = cert_getpk(fwd_cert_2) in
+    {236}new k_out_2: bitstring;
+    {237}let ek_6: bitstring = aenc(k_out_2,fwd_pk_2) in
+    {238}out(net, (relay_cert_3,ek_6));
+    {239}in(net, challenge_m_2: bitstring);
+    {240}let (=tag_hop_challenge,=rid_3,=destination_2,challenge_5: bitstring) = sdec(challenge_m_2,k_out_2) in
+    {242}event HopSignedTranscript(rid_3,destination_2,ek_6,challenge_5);
+    {241}let transcript_5: bitstring = (tag_hop_proof,rid_3,destination_2,ek_6,challenge_5) in
+    {243}out(net, sign(transcript_5,relay_sk_5));
+    {245}event HopSent(plain_2,rid_3,destination_2);
+    {246}event RelaySentHop(plain_2,rid_3,destination_2);
+    {244}let payload_5: bitstring = (if ((destination_2 = APP_L) || (destination_2 = APP_R)) then plain_2 else qkd_enc(plain_2,qkd_k(rid_3,destination_2))) in
+    {247}out(net, senc((tag_hop_data,payload_5,rid_3,destination_2),k_out_2))
+) | (
+    {248}!
+    {252}in(net, srv_cert_3: bitstring);
+    {251}let ca_pkb_4: bitstring = pkb(ca_pk) in
+    {253}if (cert_ok(srv_cert_3,ca_pkb_4) = ok) then
+    {254}if (cert_getid(srv_cert_3) = ctrl_id) then
+    {255}let pkb(ctrl_pk_3: pkey) = cert_getpk(srv_cert_3) in
+    {256}new k_4: bitstring;
+    {257}out(net, aenc(k_4,ctrl_pk_3));
+    {249}let rid_4: bitstring = R0 in
+    {258}out(net, senc((tag_reg,rid_4),k_4));
+    {259}in(net, nonce_m_3: bitstring);
+    {260}let (=tag_nonce,n_4: bitstring) = sdec(nonce_m_3,k_4) in
+    {250}let actual_meas_3: bitstring = bad_meas(R0) in
+    {261}event RelaySignedReport(rid_4,n_4,actual_meas_3);
+    {262}let report_4: bitstring = sign((rid_4,n_4,actual_meas_3),hw_sk(rid_4)) in
+    {263}out(net, senc((tag_attest,report_4),k_4));
+    {264}in(net, auth_m_3: bitstring);
+    {265}let auth_tag_3: bitstring = sdec(auth_m_3,k_4) in
+    {266}if (auth_tag_3 = tag_authed) then
+    {267}out(net, senc((tag_cfg_req,rid_4),k_4));
+    {268}in(net, cfg_m_3: bitstring);
+    {269}let (=tag_cfg,left_id_4: bitstring,right_id_4: bitstring) = sdec(cfg_m_3,k_4) in
+    {270}event RelayLoadedCfg(rid_4,n_4,left_id_4,right_id_4);
+    {271}new relay_sk_6: skey;
+    {272}let relay_pkb_4: bitstring = pkb(pk(relay_sk_6)) in
+    {273}out(net, senc((tag_gencrt,relay_pkb_4),k_4));
+    {274}in(net, cert_m_3: bitstring);
+    {275}let (=tag_cert,relay_cert_4: bitstring) = sdec(cert_m_3,k_4) in
+    {276}if (cert_ok(relay_cert_4,ca_pkb_4) = ok) then
+    {277}if (cert_getid(relay_cert_4) = rid_4) then
+    {278}if (cert_getpk(relay_cert_4) = relay_pkb_4) then
+    {279}event RelayGotCert(rid_4,n_4,actual_meas_3,relay_pkb_4);
+    {280}out(net, relay_cert_4);
+    {281}!
+    {283}in(net, (peer_cert_3: bitstring,ek_7: bitstring));
+    {284}if (cert_ok(peer_cert_3,ca_pkb_4) = ok) then
+    {285}let peer_id_3: bitstring = cert_getid(peer_cert_3) in
+    {286}if ((peer_id_3 = left_id_4) || (peer_id_3 = right_id_4)) then
+    {287}let pkb(peer_pk_3: pkey) = cert_getpk(peer_cert_3) in
+    {282}let relay_sk_7: skey = relay_sk_6 in
+    {288}let k_in_3: bitstring = adec(ek_7,relay_sk_7) in
+    {289}new challenge_6: bitstring;
+    {290}out(net, senc((tag_hop_challenge,peer_id_3,rid_4,challenge_6),k_in_3));
+    {291}in(net, proof_rx_3: bitstring);
+    {292}let transcript_6: bitstring = (tag_hop_proof,peer_id_3,rid_4,ek_7,challenge_6) in
+    {293}if (verify(proof_rx_3,transcript_6,peer_pk_3) = ok) then
+    {294}event HopPeerAuthenticated(peer_id_3,rid_4,ek_7,challenge_6);
+    {295}in(net, record_3: bitstring);
+    {296}let (=tag_hop_data,payload_6: bitstring,=peer_id_3,=rid_4) = sdec(record_3,k_in_3) in
+    {297}let plain_3: bitstring = (if ((peer_id_3 = APP_L) || (peer_id_3 = APP_R)) then payload_6 else qkd_dec(payload_6,qkd_k(peer_id_3,rid_4))) in
+    {298}event RelayGotHop(plain_3,peer_id_3,rid_4);
+    {300}in(net, fwd_cert_3: bitstring);
+    {301}if (cert_ok(fwd_cert_3,ca_pkb_4) = ok) then
+    {299}let destination_3: bitstring = (if (peer_id_3 = left_id_4) then right_id_4 else left_id_4) in
+    {302}if (cert_getid(fwd_cert_3) = destination_3) then
+    {303}let pkb(fwd_pk_3: pkey) = cert_getpk(fwd_cert_3) in
+    {304}new k_out_3: bitstring;
+    {305}let ek_8: bitstring = aenc(k_out_3,fwd_pk_3) in
+    {306}out(net, (relay_cert_4,ek_8));
+    {307}in(net, challenge_m_3: bitstring);
+    {308}let (=tag_hop_challenge,=rid_4,=destination_3,challenge_7: bitstring) = sdec(challenge_m_3,k_out_3) in
+    {310}event HopSignedTranscript(rid_4,destination_3,ek_8,challenge_7);
+    {309}let transcript_7: bitstring = (tag_hop_proof,rid_4,destination_3,ek_8,challenge_7) in
+    {311}out(net, sign(transcript_7,relay_sk_7));
+    {313}event HopSent(plain_3,rid_4,destination_3);
+    {314}event RelaySentHop(plain_3,rid_4,destination_3);
+    {312}let payload_7: bitstring = (if ((destination_3 = APP_L) || (destination_3 = APP_R)) then plain_3 else qkd_enc(plain_3,qkd_k(rid_4,destination_3))) in
+    {315}out(net, senc((tag_hop_data,payload_7,rid_4,destination_3),k_out_3))
+) | (
+    {316}!
+    {320}in(net, srv_cert_4: bitstring);
+    {319}let ca_pkb_5: bitstring = pkb(ca_pk) in
+    {321}if (cert_ok(srv_cert_4,ca_pkb_5) = ok) then
+    {322}if (cert_getid(srv_cert_4) = ctrl_id) then
+    {323}let pkb(ctrl_pk_4: pkey) = cert_getpk(srv_cert_4) in
+    {324}new k_5: bitstring;
+    {325}out(net, aenc(k_5,ctrl_pk_4));
+    {317}let rid_5: bitstring = R1 in
+    {326}out(net, senc((tag_reg,rid_5),k_5));
+    {327}in(net, nonce_m_4: bitstring);
+    {328}let (=tag_nonce,n_5: bitstring) = sdec(nonce_m_4,k_5) in
+    {318}let actual_meas_4: bitstring = bad_meas(R1) in
+    {329}event RelaySignedReport(rid_5,n_5,actual_meas_4);
+    {330}let report_5: bitstring = sign((rid_5,n_5,actual_meas_4),hw_sk(rid_5)) in
+    {331}out(net, senc((tag_attest,report_5),k_5));
+    {332}in(net, auth_m_4: bitstring);
+    {333}let auth_tag_4: bitstring = sdec(auth_m_4,k_5) in
+    {334}if (auth_tag_4 = tag_authed) then
+    {335}out(net, senc((tag_cfg_req,rid_5),k_5));
+    {336}in(net, cfg_m_4: bitstring);
+    {337}let (=tag_cfg,left_id_5: bitstring,right_id_5: bitstring) = sdec(cfg_m_4,k_5) in
+    {338}event RelayLoadedCfg(rid_5,n_5,left_id_5,right_id_5);
+    {339}new relay_sk_8: skey;
+    {340}let relay_pkb_5: bitstring = pkb(pk(relay_sk_8)) in
+    {341}out(net, senc((tag_gencrt,relay_pkb_5),k_5));
+    {342}in(net, cert_m_4: bitstring);
+    {343}let (=tag_cert,relay_cert_5: bitstring) = sdec(cert_m_4,k_5) in
+    {344}if (cert_ok(relay_cert_5,ca_pkb_5) = ok) then
+    {345}if (cert_getid(relay_cert_5) = rid_5) then
+    {346}if (cert_getpk(relay_cert_5) = relay_pkb_5) then
+    {347}event RelayGotCert(rid_5,n_5,actual_meas_4,relay_pkb_5);
+    {348}out(net, relay_cert_5);
+    {349}!
+    {351}in(net, (peer_cert_4: bitstring,ek_9: bitstring));
+    {352}if (cert_ok(peer_cert_4,ca_pkb_5) = ok) then
+    {353}let peer_id_4: bitstring = cert_getid(peer_cert_4) in
+    {354}if ((peer_id_4 = left_id_5) || (peer_id_4 = right_id_5)) then
+    {355}let pkb(peer_pk_4: pkey) = cert_getpk(peer_cert_4) in
+    {350}let relay_sk_9: skey = relay_sk_8 in
+    {356}let k_in_4: bitstring = adec(ek_9,relay_sk_9) in
+    {357}new challenge_8: bitstring;
+    {358}out(net, senc((tag_hop_challenge,peer_id_4,rid_5,challenge_8),k_in_4));
+    {359}in(net, proof_rx_4: bitstring);
+    {360}let transcript_8: bitstring = (tag_hop_proof,peer_id_4,rid_5,ek_9,challenge_8) in
+    {361}if (verify(proof_rx_4,transcript_8,peer_pk_4) = ok) then
+    {362}event HopPeerAuthenticated(peer_id_4,rid_5,ek_9,challenge_8);
+    {363}in(net, record_4: bitstring);
+    {364}let (=tag_hop_data,payload_8: bitstring,=peer_id_4,=rid_5) = sdec(record_4,k_in_4) in
+    {365}let plain_4: bitstring = (if ((peer_id_4 = APP_L) || (peer_id_4 = APP_R)) then payload_8 else qkd_dec(payload_8,qkd_k(peer_id_4,rid_5))) in
+    {366}event RelayGotHop(plain_4,peer_id_4,rid_5);
+    {368}in(net, fwd_cert_4: bitstring);
+    {369}if (cert_ok(fwd_cert_4,ca_pkb_5) = ok) then
+    {367}let destination_4: bitstring = (if (peer_id_4 = left_id_5) then right_id_5 else left_id_5) in
+    {370}if (cert_getid(fwd_cert_4) = destination_4) then
+    {371}let pkb(fwd_pk_4: pkey) = cert_getpk(fwd_cert_4) in
+    {372}new k_out_4: bitstring;
+    {373}let ek_10: bitstring = aenc(k_out_4,fwd_pk_4) in
+    {374}out(net, (relay_cert_5,ek_10));
+    {375}in(net, challenge_m_4: bitstring);
+    {376}let (=tag_hop_challenge,=rid_5,=destination_4,challenge_9: bitstring) = sdec(challenge_m_4,k_out_4) in
+    {378}event HopSignedTranscript(rid_5,destination_4,ek_10,challenge_9);
+    {377}let transcript_9: bitstring = (tag_hop_proof,rid_5,destination_4,ek_10,challenge_9) in
+    {379}out(net, sign(transcript_9,relay_sk_9));
+    {381}event HopSent(plain_4,rid_5,destination_4);
+    {382}event RelaySentHop(plain_4,rid_5,destination_4);
+    {380}let payload_9: bitstring = (if ((destination_4 = APP_L) || (destination_4 = APP_R)) then plain_4 else qkd_enc(plain_4,qkd_k(rid_5,destination_4))) in
+    {383}out(net, senc((tag_hop_data,payload_9,rid_5,destination_4),k_out_4))
+) | (
+    {384}!
+    {388}in(net, srv_cert_5: bitstring);
+    {387}let ca_pkb_6: bitstring = pkb(ca_pk) in
+    {389}if (cert_ok(srv_cert_5,ca_pkb_6) = ok) then
+    {390}if (cert_getid(srv_cert_5) = ctrl_id) then
+    {391}let pkb(ctrl_pk_5: pkey) = cert_getpk(srv_cert_5) in
+    {392}new k_6: bitstring;
+    {393}out(net, aenc(k_6,ctrl_pk_5));
+    {385}let rid_6: bitstring = R2 in
+    {394}out(net, senc((tag_reg,rid_6),k_6));
+    {395}in(net, nonce_m_5: bitstring);
+    {396}let (=tag_nonce,n_6: bitstring) = sdec(nonce_m_5,k_6) in
+    {386}let actual_meas_5: bitstring = bad_meas(R2) in
+    {397}event RelaySignedReport(rid_6,n_6,actual_meas_5);
+    {398}let report_6: bitstring = sign((rid_6,n_6,actual_meas_5),hw_sk(rid_6)) in
+    {399}out(net, senc((tag_attest,report_6),k_6));
+    {400}in(net, auth_m_5: bitstring);
+    {401}let auth_tag_5: bitstring = sdec(auth_m_5,k_6) in
+    {402}if (auth_tag_5 = tag_authed) then
+    {403}out(net, senc((tag_cfg_req,rid_6),k_6));
+    {404}in(net, cfg_m_5: bitstring);
+    {405}let (=tag_cfg,left_id_6: bitstring,right_id_6: bitstring) = sdec(cfg_m_5,k_6) in
+    {406}event RelayLoadedCfg(rid_6,n_6,left_id_6,right_id_6);
+    {407}new relay_sk_10: skey;
+    {408}let relay_pkb_6: bitstring = pkb(pk(relay_sk_10)) in
+    {409}out(net, senc((tag_gencrt,relay_pkb_6),k_6));
+    {410}in(net, cert_m_5: bitstring);
+    {411}let (=tag_cert,relay_cert_6: bitstring) = sdec(cert_m_5,k_6) in
+    {412}if (cert_ok(relay_cert_6,ca_pkb_6) = ok) then
+    {413}if (cert_getid(relay_cert_6) = rid_6) then
+    {414}if (cert_getpk(relay_cert_6) = relay_pkb_6) then
+    {415}event RelayGotCert(rid_6,n_6,actual_meas_5,relay_pkb_6);
+    {416}out(net, relay_cert_6);
+    {417}!
+    {419}in(net, (peer_cert_5: bitstring,ek_11: bitstring));
+    {420}if (cert_ok(peer_cert_5,ca_pkb_6) = ok) then
+    {421}let peer_id_5: bitstring = cert_getid(peer_cert_5) in
+    {422}if ((peer_id_5 = left_id_6) || (peer_id_5 = right_id_6)) then
+    {423}let pkb(peer_pk_5: pkey) = cert_getpk(peer_cert_5) in
+    {418}let relay_sk_11: skey = relay_sk_10 in
+    {424}let k_in_5: bitstring = adec(ek_11,relay_sk_11) in
+    {425}new challenge_10: bitstring;
+    {426}out(net, senc((tag_hop_challenge,peer_id_5,rid_6,challenge_10),k_in_5));
+    {427}in(net, proof_rx_5: bitstring);
+    {428}let transcript_10: bitstring = (tag_hop_proof,peer_id_5,rid_6,ek_11,challenge_10) in
+    {429}if (verify(proof_rx_5,transcript_10,peer_pk_5) = ok) then
+    {430}event HopPeerAuthenticated(peer_id_5,rid_6,ek_11,challenge_10);
+    {431}in(net, record_5: bitstring);
+    {432}let (=tag_hop_data,payload_10: bitstring,=peer_id_5,=rid_6) = sdec(record_5,k_in_5) in
+    {433}let plain_5: bitstring = (if ((peer_id_5 = APP_L) || (peer_id_5 = APP_R)) then payload_10 else qkd_dec(payload_10,qkd_k(peer_id_5,rid_6))) in
+    {434}event RelayGotHop(plain_5,peer_id_5,rid_6);
+    {436}in(net, fwd_cert_5: bitstring);
+    {437}if (cert_ok(fwd_cert_5,ca_pkb_6) = ok) then
+    {435}let destination_5: bitstring = (if (peer_id_5 = left_id_6) then right_id_6 else left_id_6) in
+    {438}if (cert_getid(fwd_cert_5) = destination_5) then
+    {439}let pkb(fwd_pk_5: pkey) = cert_getpk(fwd_cert_5) in
+    {440}new k_out_5: bitstring;
+    {441}let ek_12: bitstring = aenc(k_out_5,fwd_pk_5) in
+    {442}out(net, (relay_cert_6,ek_12));
+    {443}in(net, challenge_m_5: bitstring);
+    {444}let (=tag_hop_challenge,=rid_6,=destination_5,challenge_11: bitstring) = sdec(challenge_m_5,k_out_5) in
+    {446}event HopSignedTranscript(rid_6,destination_5,ek_12,challenge_11);
+    {445}let transcript_11: bitstring = (tag_hop_proof,rid_6,destination_5,ek_12,challenge_11) in
+    {447}out(net, sign(transcript_11,relay_sk_11));
+    {449}event HopSent(plain_5,rid_6,destination_5);
+    {450}event RelaySentHop(plain_5,rid_6,destination_5);
+    {448}let payload_11: bitstring = (if ((destination_5 = APP_L) || (destination_5 = APP_R)) then plain_5 else qkd_enc(plain_5,qkd_k(rid_6,destination_5))) in
+    {451}out(net, senc((tag_hop_data,payload_11,rid_6,destination_5),k_out_5))
+) | (
+    {452}!
+    {457}in(net, srv_cert_6: bitstring);
+    {456}let ca_pkb_7: bitstring = pkb(ca_pk) in
+    {458}if (cert_ok(srv_cert_6,ca_pkb_7) = ok) then
+    {459}if (cert_getid(srv_cert_6) = ctrl_id) then
+    {460}let pkb(ctrl_pk_6: pkey) = cert_getpk(srv_cert_6) in
+    {461}new k_7: bitstring;
+    {462}out(net, aenc(k_7,ctrl_pk_6));
+    {453}let rid_7: bitstring = R0 in
+    {463}out(net, senc((tag_reg,rid_7),k_7));
+    {464}in(net, nonce_m_6: bitstring);
+    {465}let (=tag_nonce,n_7: bitstring) = sdec(nonce_m_6,k_7) in
+    {455}let dev_sk: skey = hw_sk(DEVX) in
+    {454}let actual_meas_6: bitstring = meas(R0) in
+    {466}let report_7: bitstring = sign((rid_7,n_7,actual_meas_6),dev_sk) in
+    {467}out(net, senc((tag_attest,report_7),k_7));
+    {468}in(net, auth_m_6: bitstring);
+    {469}let auth_tag_6: bitstring = sdec(auth_m_6,k_7) in
+    {470}if (auth_tag_6 = tag_authed) then
+    {471}out(net, senc((tag_cfg_req,rid_7),k_7));
+    {472}in(net, cfg_m_6: bitstring);
+    {473}let (=tag_cfg,left_id_7: bitstring,right_id_7: bitstring) = sdec(cfg_m_6,k_7) in
+    {474}new relay_sk_12: skey;
+    {475}let relay_pkb_7: bitstring = pkb(pk(relay_sk_12)) in
+    {476}out(net, senc((tag_gencrt,relay_pkb_7),k_7));
+    {477}in(net, cert_m_6: bitstring);
+    {478}let (=tag_cert,relay_cert_7: bitstring) = sdec(cert_m_6,k_7) in
+    {479}out(net, relay_cert_7);
+    {480}out(net, relay_sk_12)
+) | (
+    {485}in(net, relay_cert_8: bitstring);
+    {486}if (cert_ok(relay_cert_8,ca_pkb) = ok) then
+    {482}let neighbor: bitstring = R0 in
+    {487}if (cert_getid(relay_cert_8) = neighbor) then
+    {488}let pkb(relay_pk: pkey) = cert_getpk(relay_cert_8) in
+    {489}new k_8: bitstring;
+    {490}let ek_13: bitstring = aenc(k_8,relay_pk) in
+    {491}out(net, (app_l_cert,ek_13));
+    {492}in(net, challenge_m_6: bitstring);
+    {481}let app_id: bitstring = APP_L in
+    {493}let (=tag_hop_challenge,=app_id,=neighbor,challenge_12: bitstring) = sdec(challenge_m_6,k_8) in
+    {495}event HopSignedTranscript(app_id,neighbor,ek_13,challenge_12);
+    {494}let transcript_12: bitstring = (tag_hop_proof,app_id,neighbor,ek_13,challenge_12) in
+    {484}let app_sk: skey = app_l_sk in
+    {496}out(net, sign(transcript_12,app_sk));
+    {483}let message: bitstring = secret_msg in
+    {497}event AppSubmitted(message,app_id,neighbor);
+    {498}event HopSent(message,app_id,neighbor);
+    {499}out(net, senc((tag_hop_data,message,app_id,neighbor),k_8))
+) | (
+    {504}in(net, relay_cert_9: bitstring);
+    {505}if (cert_ok(relay_cert_9,ca_pkb) = ok) then
+    {501}let neighbor_1: bitstring = R2 in
+    {506}if (cert_getid(relay_cert_9) = neighbor_1) then
+    {507}let pkb(relay_pk_1: pkey) = cert_getpk(relay_cert_9) in
+    {508}new k_9: bitstring;
+    {509}let ek_14: bitstring = aenc(k_9,relay_pk_1) in
+    {510}out(net, (app_r_cert,ek_14));
+    {511}in(net, challenge_m_7: bitstring);
+    {500}let app_id_1: bitstring = APP_R in
+    {512}let (=tag_hop_challenge,=app_id_1,=neighbor_1,challenge_13: bitstring) = sdec(challenge_m_7,k_9) in
+    {514}event HopSignedTranscript(app_id_1,neighbor_1,ek_14,challenge_13);
+    {513}let transcript_13: bitstring = (tag_hop_proof,app_id_1,neighbor_1,ek_14,challenge_13) in
+    {503}let app_sk_1: skey = app_r_sk in
+    {515}out(net, sign(transcript_13,app_sk_1));
+    {502}let message_1: bitstring = secret_msg_reverse in
+    {516}event AppSubmitted(message_1,app_id_1,neighbor_1);
+    {517}event HopSent(message_1,app_id_1,neighbor_1);
+    {518}out(net, senc((tag_hop_data,message_1,app_id_1,neighbor_1),k_9))
+) | (
+    {519}!
+    {523}in(net, (peer_cert_6: bitstring,ek_15: bitstring));
+    {524}if (cert_ok(peer_cert_6,ca_pkb) = ok) then
+    {521}let neighbor_2: bitstring = R0 in
+    {525}if (cert_getid(peer_cert_6) = neighbor_2) then
+    {526}let pkb(peer_pk_6: pkey) = cert_getpk(peer_cert_6) in
+    {522}let app_sk_2: skey = app_l_sk in
+    {527}let k_10: bitstring = adec(ek_15,app_sk_2) in
+    {528}new challenge_14: bitstring;
+    {520}let app_id_2: bitstring = APP_L in
+    {529}out(net, senc((tag_hop_challenge,neighbor_2,app_id_2,challenge_14),k_10));
+    {530}in(net, proof_rx_6: bitstring);
+    {531}let transcript_14: bitstring = (tag_hop_proof,neighbor_2,app_id_2,ek_15,challenge_14) in
+    {532}if (verify(proof_rx_6,transcript_14,peer_pk_6) = ok) then
+    {533}event HopPeerAuthenticated(neighbor_2,app_id_2,ek_15,challenge_14);
+    {534}in(net, record_6: bitstring);
+    {535}let (=tag_hop_data,plain_6: bitstring,=neighbor_2,=app_id_2) = sdec(record_6,k_10) in
+    {536}event AppDelivered(plain_6,neighbor_2,app_id_2)
+) | (
+    {537}!
+    {541}in(net, (peer_cert_7: bitstring,ek_16: bitstring));
+    {542}if (cert_ok(peer_cert_7,ca_pkb) = ok) then
+    {539}let neighbor_3: bitstring = R2 in
+    {543}if (cert_getid(peer_cert_7) = neighbor_3) then
+    {544}let pkb(peer_pk_7: pkey) = cert_getpk(peer_cert_7) in
+    {540}let app_sk_3: skey = app_r_sk in
+    {545}let k_11: bitstring = adec(ek_16,app_sk_3) in
+    {546}new challenge_15: bitstring;
+    {538}let app_id_3: bitstring = APP_R in
+    {547}out(net, senc((tag_hop_challenge,neighbor_3,app_id_3,challenge_15),k_11));
+    {548}in(net, proof_rx_7: bitstring);
+    {549}let transcript_15: bitstring = (tag_hop_proof,neighbor_3,app_id_3,ek_16,challenge_15) in
+    {550}if (verify(proof_rx_7,transcript_15,peer_pk_7) = ok) then
+    {551}event HopPeerAuthenticated(neighbor_3,app_id_3,ek_16,challenge_15);
+    {552}in(net, record_7: bitstring);
+    {553}let (=tag_hop_data,plain_7: bitstring,=neighbor_3,=app_id_3) = sdec(record_7,k_11) in
+    {554}event AppDelivered(plain_7,neighbor_3,app_id_3)
+)
+
+-- Query not attacker(secret_msg[]) in process 1.
+Translating the process into Horn clauses...
+Completing...
+200 rules inserted. Base: 200 rules (50 with conclusion selected). Queue: 246 rules.
+400 rules inserted. Base: 398 rules (58 with conclusion selected). Queue: 186 rules.
+600 rules inserted. Base: 581 rules (67 with conclusion selected). Queue: 34 rules.
+800 rules inserted. Base: 708 rules (83 with conclusion selected). Queue: 37 rules.
+1000 rules inserted. Base: 796 rules (108 with conclusion selected). Queue: 31 rules.
+1200 rules inserted. Base: 961 rules (132 with conclusion selected). Queue: 10 rules.
+1400 rules inserted. Base: 1034 rules (150 with conclusion selected). Queue: 5 rules.
+Starting query not attacker(secret_msg[])
+RESULT not attacker(secret_msg[]) is true.
+-- Query not attacker(secret_msg_reverse[]) in process 1.
+Translating the process into Horn clauses...
+Completing...
+200 rules inserted. Base: 200 rules (50 with conclusion selected). Queue: 246 rules.
+400 rules inserted. Base: 398 rules (58 with conclusion selected). Queue: 186 rules.
+600 rules inserted. Base: 581 rules (67 with conclusion selected). Queue: 34 rules.
+800 rules inserted. Base: 708 rules (83 with conclusion selected). Queue: 37 rules.
+1000 rules inserted. Base: 796 rules (108 with conclusion selected). Queue: 31 rules.
+1200 rules inserted. Base: 961 rules (132 with conclusion selected). Queue: 10 rules.
+1400 rules inserted. Base: 1034 rules (150 with conclusion selected). Queue: 5 rules.
+Starting query not attacker(secret_msg_reverse[])
+RESULT not attacker(secret_msg_reverse[]) is true.
+-- Query not attacker(qkd_k(R0,R1)) in process 1.
+Translating the process into Horn clauses...
+Completing...
+200 rules inserted. Base: 200 rules (50 with conclusion selected). Queue: 246 rules.
+400 rules inserted. Base: 398 rules (58 with conclusion selected). Queue: 186 rules.
+600 rules inserted. Base: 581 rules (67 with conclusion selected). Queue: 34 rules.
+800 rules inserted. Base: 708 rules (83 with conclusion selected). Queue: 37 rules.
+1000 rules inserted. Base: 796 rules (108 with conclusion selected). Queue: 31 rules.
+1200 rules inserted. Base: 961 rules (132 with conclusion selected). Queue: 10 rules.
+1400 rules inserted. Base: 1034 rules (150 with conclusion selected). Queue: 5 rules.
+Starting query not attacker(qkd_k(R0,R1))
+RESULT not attacker(qkd_k(R0,R1)) is true.
+-- Query not attacker(qkd_k(R1,R2)) in process 1.
+Translating the process into Horn clauses...
+Completing...
+200 rules inserted. Base: 200 rules (50 with conclusion selected). Queue: 246 rules.
+400 rules inserted. Base: 398 rules (58 with conclusion selected). Queue: 186 rules.
+600 rules inserted. Base: 581 rules (67 with conclusion selected). Queue: 34 rules.
+800 rules inserted. Base: 708 rules (83 with conclusion selected). Queue: 37 rules.
+1000 rules inserted. Base: 796 rules (108 with conclusion selected). Queue: 31 rules.
+1200 rules inserted. Base: 961 rules (132 with conclusion selected). Queue: 10 rules.
+1400 rules inserted. Base: 1034 rules (150 with conclusion selected). Queue: 5 rules.
+Starting query not attacker(qkd_k(R1,R2))
+RESULT not attacker(qkd_k(R1,R2)) is true.
+-- Query not attacker(qkd_k(R1,R0)) in process 1.
+Translating the process into Horn clauses...
+Completing...
+200 rules inserted. Base: 200 rules (50 with conclusion selected). Queue: 246 rules.
+400 rules inserted. Base: 398 rules (58 with conclusion selected). Queue: 186 rules.
+600 rules inserted. Base: 581 rules (67 with conclusion selected). Queue: 34 rules.
+800 rules inserted. Base: 708 rules (83 with conclusion selected). Queue: 37 rules.
+1000 rules inserted. Base: 796 rules (108 with conclusion selected). Queue: 31 rules.
+1200 rules inserted. Base: 961 rules (132 with conclusion selected). Queue: 10 rules.
+1400 rules inserted. Base: 1034 rules (150 with conclusion selected). Queue: 5 rules.
+Starting query not attacker(qkd_k(R1,R0))
+RESULT not attacker(qkd_k(R1,R0)) is true.
+-- Query not attacker(qkd_k(R2,R1)) in process 1.
+Translating the process into Horn clauses...
+Completing...
+200 rules inserted. Base: 200 rules (50 with conclusion selected). Queue: 246 rules.
+400 rules inserted. Base: 398 rules (58 with conclusion selected). Queue: 186 rules.
+600 rules inserted. Base: 581 rules (67 with conclusion selected). Queue: 34 rules.
+800 rules inserted. Base: 708 rules (83 with conclusion selected). Queue: 37 rules.
+1000 rules inserted. Base: 796 rules (108 with conclusion selected). Queue: 31 rules.
+1200 rules inserted. Base: 961 rules (132 with conclusion selected). Queue: 10 rules.
+1400 rules inserted. Base: 1034 rules (150 with conclusion selected). Queue: 5 rules.
+Starting query not attacker(qkd_k(R2,R1))
+RESULT not attacker(qkd_k(R2,R1)) is true.
+-- Query event(CtrlIssuedCert(rid_8,n_8,m,pb)) ==> event(CtrlGotAttest(rid_8,n_8,m)) in process 1.
+Translating the process into Horn clauses...
+Completing...
+200 rules inserted. Base: 200 rules (50 with conclusion selected). Queue: 249 rules.
+400 rules inserted. Base: 398 rules (57 with conclusion selected). Queue: 193 rules.
+600 rules inserted. Base: 584 rules (67 with conclusion selected). Queue: 36 rules.
+800 rules inserted. Base: 705 rules (83 with conclusion selected). Queue: 36 rules.
+1000 rules inserted. Base: 818 rules (96 with conclusion selected). Queue: 24 rules.
+1200 rules inserted. Base: 944 rules (125 with conclusion selected). Queue: 73 rules.
+1400 rules inserted. Base: 1057 rules (141 with conclusion selected). Queue: 4 rules.
+1600 rules inserted. Base: 1125 rules (163 with conclusion selected). Queue: 4 rules.
+Starting query event(CtrlIssuedCert(rid_8,n_8,m,pb)) ==> event(CtrlGotAttest(rid_8,n_8,m))
+goal reachable: b-event(CtrlGotAttest(R0,n_8,meas(R0))) && b-event(@p_act(@occ55_7,senc((tag_nonce[],n_8),k_12))) -> event(CtrlIssuedCert(R0,n_8,meas(R0),pkb(pk(relay_sk_13))))
+Abbreviations:
+k_12 = k_1[srv_cert = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid]
+n_8 = n[reg_m = senc((tag_reg[],R0),k_12),ek = aenc(k_12,pk(ctrl_sk[])),!1 = @sid_1]
+relay_sk_13 = relay_sk[cfg_m = senc((tag_cfg[],APP_L,R1),k_12),auth_m = senc(tag_authed[],k_12),nonce_m = senc((tag_nonce[],n_8),k_12),srv_cert = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid]
+@occ55_7 = @occ55_6[!1 = @sid]
+goal reachable: b-event(CtrlGotAttest(R1,n_8,meas(R1))) && b-event(@p_act(@occ123_7,senc((tag_nonce[],n_8),k_12))) -> event(CtrlIssuedCert(R1,n_8,meas(R1),pkb(pk(relay_sk_13))))
+Abbreviations:
+k_12 = k_2[srv_cert_1 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid]
+n_8 = n[reg_m = senc((tag_reg[],R1),k_12),ek = aenc(k_12,pk(ctrl_sk[])),!1 = @sid_1]
+relay_sk_13 = relay_sk_2[cfg_m_1 = senc((tag_cfg[],R0,R2),k_12),auth_m_1 = senc(tag_authed[],k_12),nonce_m_1 = senc((tag_nonce[],n_8),k_12),srv_cert_1 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid]
+@occ123_7 = @occ123_6[!1 = @sid]
+goal reachable: b-event(CtrlGotAttest(R2,n_8,meas(R2))) && b-event(@p_act(@occ191_7,senc((tag_nonce[],n_8),k_12))) -> event(CtrlIssuedCert(R2,n_8,meas(R2),pkb(pk(relay_sk_13))))
+Abbreviations:
+k_12 = k_3[srv_cert_2 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid]
+n_8 = n[reg_m = senc((tag_reg[],R2),k_12),ek = aenc(k_12,pk(ctrl_sk[])),!1 = @sid_1]
+relay_sk_13 = relay_sk_4[cfg_m_2 = senc((tag_cfg[],R1,APP_R),k_12),auth_m_2 = senc(tag_authed[],k_12),nonce_m_2 = senc((tag_nonce[],n_8),k_12),srv_cert_2 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid]
+@occ191_7 = @occ191_6[!1 = @sid]
+RESULT event(CtrlIssuedCert(rid_8,n_8,m,pb)) ==> event(CtrlGotAttest(rid_8,n_8,m)) is true.
+-- Query event(CtrlGotAttest(rid_8,n_8,m)) ==> event(CtrlGotRegister(rid_8)) in process 1.
+Translating the process into Horn clauses...
+Completing...
+200 rules inserted. Base: 200 rules (50 with conclusion selected). Queue: 247 rules.
+400 rules inserted. Base: 398 rules (57 with conclusion selected). Queue: 187 rules.
+600 rules inserted. Base: 582 rules (67 with conclusion selected). Queue: 34 rules.
+800 rules inserted. Base: 702 rules (83 with conclusion selected). Queue: 45 rules.
+1000 rules inserted. Base: 808 rules (106 with conclusion selected). Queue: 10 rules.
+1200 rules inserted. Base: 954 rules (128 with conclusion selected). Queue: 19 rules.
+1400 rules inserted. Base: 1032 rules (148 with conclusion selected). Queue: 5 rules.
+Starting query event(CtrlGotAttest(rid_8,n_8,m)) ==> event(CtrlGotRegister(rid_8))
+goal reachable: b-event(@p_act(@occ55_8,senc((tag_nonce[],n_8),k_12))) && b-event(CtrlGotRegister(R0)) -> event(CtrlGotAttest(R0,n_8,meas(R0)))
+Abbreviations:
+k_12 = k_1[srv_cert = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid]
+n_8 = n[reg_m = senc((tag_reg[],R0),k_12),ek = aenc(k_12,pk(ctrl_sk[])),!1 = @sid_1]
+@occ55_8 = @occ55_7[!1 = @sid]
+goal reachable: b-event(@p_act(@occ123_8,senc((tag_nonce[],n_8),k_12))) && b-event(CtrlGotRegister(R1)) -> event(CtrlGotAttest(R1,n_8,meas(R1)))
+Abbreviations:
+k_12 = k_2[srv_cert_1 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid]
+n_8 = n[reg_m = senc((tag_reg[],R1),k_12),ek = aenc(k_12,pk(ctrl_sk[])),!1 = @sid_1]
+@occ123_8 = @occ123_7[!1 = @sid]
+goal reachable: b-event(@p_act(@occ191_8,senc((tag_nonce[],n_8),k_12))) && b-event(CtrlGotRegister(R2)) -> event(CtrlGotAttest(R2,n_8,meas(R2)))
+Abbreviations:
+k_12 = k_3[srv_cert_2 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid]
+n_8 = n[reg_m = senc((tag_reg[],R2),k_12),ek = aenc(k_12,pk(ctrl_sk[])),!1 = @sid_1]
+@occ191_8 = @occ191_7[!1 = @sid]
+RESULT event(CtrlGotAttest(rid_8,n_8,m)) ==> event(CtrlGotRegister(rid_8)) is true.
+-- Query inj-event(CtrlIssuedCert(rid_8,n_8,m,pb)) ==> inj-event(CtrlGotAttest(rid_8,n_8,m)) in process 1.
+Translating the process into Horn clauses...
+Completing...
+200 rules inserted. Base: 200 rules (50 with conclusion selected). Queue: 249 rules.
+400 rules inserted. Base: 398 rules (57 with conclusion selected). Queue: 193 rules.
+600 rules inserted. Base: 584 rules (67 with conclusion selected). Queue: 36 rules.
+800 rules inserted. Base: 705 rules (83 with conclusion selected). Queue: 36 rules.
+1000 rules inserted. Base: 816 rules (95 with conclusion selected). Queue: 25 rules.
+1200 rules inserted. Base: 944 rules (125 with conclusion selected). Queue: 79 rules.
+1400 rules inserted. Base: 1063 rules (141 with conclusion selected). Queue: 4 rules.
+1600 rules inserted. Base: 1131 rules (163 with conclusion selected). Queue: 4 rules.
+Starting query inj-event(CtrlIssuedCert(rid_8,n_8,m,pb)) ==> inj-event(CtrlGotAttest(rid_8,n_8,m))
+goal reachable: b-event(@p_act(@occ39_1,senc((tag_gencrt[],pkb(pk(relay_sk_13))),k_12))) && b-event(@p_act(@occ33_1,senc((tag_cfg_req[],R0),k_12))) && b-inj-event(CtrlGotAttest(R0,n_8,meas(R0)),@occ31_1) && b-event(@p_act(@occ55_9,senc((tag_nonce[],n_8),k_12))) -> inj-event(CtrlIssuedCert(R0,n_8,meas(R0),pkb(pk(relay_sk_13))),@occ42_1)
+The 1st, 2nd, 3rd, 4th hypotheses occur strictly before the conclusion.
+Abbreviations:
+k_12 = k_1[srv_cert = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid]
+n_8 = n[reg_m = senc((tag_reg[],R0),k_12),ek = aenc(k_12,pk(ctrl_sk[])),!1 = @sid_1]
+relay_sk_13 = relay_sk[cfg_m = senc((tag_cfg[],APP_L,R1),k_12),auth_m = senc(tag_authed[],k_12),nonce_m = senc((tag_nonce[],n_8),k_12),srv_cert = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid]
+@occ42_1 = @occ42[csr_m = senc((tag_gencrt[],pkb(pk(relay_sk_13))),k_12),cfg_req = senc((tag_cfg_req[],R0),k_12),att_m = senc((tag_attest[],sign((R0,n_8,meas(R0)),hw_sk(R0))),k_12),reg_m = senc((tag_reg[],R0),k_12),ek = aenc(k_12,pk(ctrl_sk[])),!1 = @sid_1]
+@occ39_1 = @occ39[!1 = @sid_1]
+@occ33_1 = @occ33[!1 = @sid_1]
+@occ31_1 = @occ31[att_m = senc((tag_attest[],sign((R0,n_8,meas(R0)),hw_sk(R0))),k_12),reg_m = senc((tag_reg[],R0),k_12),ek = aenc(k_12,pk(ctrl_sk[])),!1 = @sid_1]
+@occ55_9 = @occ55_8[!1 = @sid]
+goal reachable: b-event(@p_act(@occ39_1,senc((tag_gencrt[],pkb(pk(relay_sk_13))),k_12))) && b-event(@p_act(@occ33_1,senc((tag_cfg_req[],R1),k_12))) && b-inj-event(CtrlGotAttest(R1,n_8,meas(R1)),@occ31_1) && b-event(@p_act(@occ123_9,senc((tag_nonce[],n_8),k_12))) -> inj-event(CtrlIssuedCert(R1,n_8,meas(R1),pkb(pk(relay_sk_13))),@occ42_1)
+The 1st, 2nd, 3rd, 4th hypotheses occur strictly before the conclusion.
+Abbreviations:
+k_12 = k_2[srv_cert_1 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid]
+n_8 = n[reg_m = senc((tag_reg[],R1),k_12),ek = aenc(k_12,pk(ctrl_sk[])),!1 = @sid_1]
+relay_sk_13 = relay_sk_2[cfg_m_1 = senc((tag_cfg[],R0,R2),k_12),auth_m_1 = senc(tag_authed[],k_12),nonce_m_1 = senc((tag_nonce[],n_8),k_12),srv_cert_1 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid]
+@occ42_1 = @occ42[csr_m = senc((tag_gencrt[],pkb(pk(relay_sk_13))),k_12),cfg_req = senc((tag_cfg_req[],R1),k_12),att_m = senc((tag_attest[],sign((R1,n_8,meas(R1)),hw_sk(R1))),k_12),reg_m = senc((tag_reg[],R1),k_12),ek = aenc(k_12,pk(ctrl_sk[])),!1 = @sid_1]
+@occ39_1 = @occ39[!1 = @sid_1]
+@occ33_1 = @occ33[!1 = @sid_1]
+@occ31_1 = @occ31[att_m = senc((tag_attest[],sign((R1,n_8,meas(R1)),hw_sk(R1))),k_12),reg_m = senc((tag_reg[],R1),k_12),ek = aenc(k_12,pk(ctrl_sk[])),!1 = @sid_1]
+@occ123_9 = @occ123_8[!1 = @sid]
+goal reachable: b-event(@p_act(@occ39_1,senc((tag_gencrt[],pkb(pk(relay_sk_13))),k_12))) && b-event(@p_act(@occ33_1,senc((tag_cfg_req[],R2),k_12))) && b-inj-event(CtrlGotAttest(R2,n_8,meas(R2)),@occ31_1) && b-event(@p_act(@occ191_9,senc((tag_nonce[],n_8),k_12))) -> inj-event(CtrlIssuedCert(R2,n_8,meas(R2),pkb(pk(relay_sk_13))),@occ42_1)
+The 1st, 2nd, 3rd, 4th hypotheses occur strictly before the conclusion.
+Abbreviations:
+k_12 = k_3[srv_cert_2 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid]
+n_8 = n[reg_m = senc((tag_reg[],R2),k_12),ek = aenc(k_12,pk(ctrl_sk[])),!1 = @sid_1]
+relay_sk_13 = relay_sk_4[cfg_m_2 = senc((tag_cfg[],R1,APP_R),k_12),auth_m_2 = senc(tag_authed[],k_12),nonce_m_2 = senc((tag_nonce[],n_8),k_12),srv_cert_2 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid]
+@occ42_1 = @occ42[csr_m = senc((tag_gencrt[],pkb(pk(relay_sk_13))),k_12),cfg_req = senc((tag_cfg_req[],R2),k_12),att_m = senc((tag_attest[],sign((R2,n_8,meas(R2)),hw_sk(R2))),k_12),reg_m = senc((tag_reg[],R2),k_12),ek = aenc(k_12,pk(ctrl_sk[])),!1 = @sid_1]
+@occ39_1 = @occ39[!1 = @sid_1]
+@occ33_1 = @occ33[!1 = @sid_1]
+@occ31_1 = @occ31[att_m = senc((tag_attest[],sign((R2,n_8,meas(R2)),hw_sk(R2))),k_12),reg_m = senc((tag_reg[],R2),k_12),ek = aenc(k_12,pk(ctrl_sk[])),!1 = @sid_1]
+@occ191_9 = @occ191_8[!1 = @sid]
+RESULT inj-event(CtrlIssuedCert(rid_8,n_8,m,pb)) ==> inj-event(CtrlGotAttest(rid_8,n_8,m)) is true.
+-- Query inj-event(CtrlGotAttest(rid_8,n_8,m)) ==> inj-event(RelaySignedReport(rid_8,n_8,m)) in process 1.
+Translating the process into Horn clauses...
+Completing...
+200 rules inserted. Base: 200 rules (50 with conclusion selected). Queue: 247 rules.
+400 rules inserted. Base: 398 rules (57 with conclusion selected). Queue: 187 rules.
+600 rules inserted. Base: 582 rules (67 with conclusion selected). Queue: 34 rules.
+800 rules inserted. Base: 702 rules (83 with conclusion selected). Queue: 45 rules.
+1000 rules inserted. Base: 826 rules (106 with conclusion selected). Queue: 10 rules.
+1200 rules inserted. Base: 972 rules (128 with conclusion selected). Queue: 19 rules.
+1400 rules inserted. Base: 1050 rules (148 with conclusion selected). Queue: 5 rules.
+Starting query inj-event(CtrlGotAttest(rid_8,n_8,m)) ==> inj-event(RelaySignedReport(rid_8,n_8,m))
+goal reachable: b-inj-event(RelaySignedReport(R0,n_8,meas(R0)),@occ57_1) && b-event(@p_act(@occ55_10,senc((tag_nonce[],n_8),k_12))) -> inj-event(CtrlGotAttest(R0,n_8,meas(R0)),@occ31_2)
+The 1st, 2nd hypotheses occur strictly before the conclusion.
+Abbreviations:
+k_12 = k_1[srv_cert = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid]
+n_8 = n[reg_m = senc((tag_reg[],R0),k_12),ek = aenc(k_12,pk(ctrl_sk[])),!1 = @sid_1]
+@occ31_2 = @occ31_1[att_m = senc((tag_attest[],sign((R0,n_8,meas(R0)),hw_sk(R0))),k_12),reg_m = senc((tag_reg[],R0),k_12),ek = aenc(k_12,pk(ctrl_sk[])),!1 = @sid_1]
+@occ57_1 = @occ57[nonce_m = senc((tag_nonce[],n_8),k_12),srv_cert = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid]
+@occ55_10 = @occ55_9[!1 = @sid]
+goal reachable: b-inj-event(RelaySignedReport(R1,n_8,meas(R1)),@occ125_1) && b-event(@p_act(@occ123_10,senc((tag_nonce[],n_8),k_12))) -> inj-event(CtrlGotAttest(R1,n_8,meas(R1)),@occ31_2)
+The 1st, 2nd hypotheses occur strictly before the conclusion.
+Abbreviations:
+k_12 = k_2[srv_cert_1 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid]
+n_8 = n[reg_m = senc((tag_reg[],R1),k_12),ek = aenc(k_12,pk(ctrl_sk[])),!1 = @sid_1]
+@occ31_2 = @occ31_1[att_m = senc((tag_attest[],sign((R1,n_8,meas(R1)),hw_sk(R1))),k_12),reg_m = senc((tag_reg[],R1),k_12),ek = aenc(k_12,pk(ctrl_sk[])),!1 = @sid_1]
+@occ125_1 = @occ125[nonce_m_1 = senc((tag_nonce[],n_8),k_12),srv_cert_1 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid]
+@occ123_10 = @occ123_9[!1 = @sid]
+goal reachable: b-inj-event(RelaySignedReport(R2,n_8,meas(R2)),@occ193_1) && b-event(@p_act(@occ191_10,senc((tag_nonce[],n_8),k_12))) -> inj-event(CtrlGotAttest(R2,n_8,meas(R2)),@occ31_2)
+The 1st, 2nd hypotheses occur strictly before the conclusion.
+Abbreviations:
+k_12 = k_3[srv_cert_2 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid]
+n_8 = n[reg_m = senc((tag_reg[],R2),k_12),ek = aenc(k_12,pk(ctrl_sk[])),!1 = @sid_1]
+@occ31_2 = @occ31_1[att_m = senc((tag_attest[],sign((R2,n_8,meas(R2)),hw_sk(R2))),k_12),reg_m = senc((tag_reg[],R2),k_12),ek = aenc(k_12,pk(ctrl_sk[])),!1 = @sid_1]
+@occ193_1 = @occ193[nonce_m_2 = senc((tag_nonce[],n_8),k_12),srv_cert_2 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid]
+@occ191_10 = @occ191_9[!1 = @sid]
+RESULT inj-event(CtrlGotAttest(rid_8,n_8,m)) ==> inj-event(RelaySignedReport(rid_8,n_8,m)) is true.
+-- Query event(RelayGotHop(m,f,t)) ==> event(HopSent(m,f,t)) in process 1.
+Translating the process into Horn clauses...
+Completing...
+200 rules inserted. Base: 200 rules (50 with conclusion selected). Queue: 281 rules.
+400 rules inserted. Base: 399 rules (55 with conclusion selected). Queue: 249 rules.
+600 rules inserted. Base: 594 rules (65 with conclusion selected). Queue: 84 rules.
+800 rules inserted. Base: 732 rules (76 with conclusion selected). Queue: 36 rules.
+1000 rules inserted. Base: 848 rules (98 with conclusion selected). Queue: 14 rules.
+1200 rules inserted. Base: 974 rules (123 with conclusion selected). Queue: 59 rules.
+1400 rules inserted. Base: 1071 rules (136 with conclusion selected). Queue: 4 rules.
+1600 rules inserted. Base: 1132 rules (155 with conclusion selected). Queue: 4 rules.
+Starting query event(RelayGotHop(m,f,t)) ==> event(HopSent(m,f,t))
+goal reachable: b-event(HopSent(secret_msg_reverse[],R1,R0)) && b-event(HopSent(secret_msg_reverse[],R2,R1)) && b-event(HopSent(secret_msg_reverse[],APP_R,R2)) && b-event(@p_act(@occ191_11,senc((tag_nonce[],n_8),k_12))) && b-event(@p_act(@occ123_11,senc((tag_nonce[],n_9),k_13))) && b-event(@p_act(@occ55_11,senc((tag_nonce[],n_10),k_14))) -> event(RelayGotHop(secret_msg_reverse[],R1,R0))
+Abbreviations:
+@occ191_11 = @occ191_10[!1 = @sid]
+k_12 = k_3[srv_cert_2 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid]
+n_8 = n[reg_m = senc((tag_reg[],R2),k_12),ek = aenc(k_12,pk(ctrl_sk[])),!1 = @sid_1]
+@occ123_11 = @occ123_10[!1 = @sid_2]
+k_13 = k_2[srv_cert_1 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid_2]
+n_9 = n[reg_m = senc((tag_reg[],R1),k_13),ek = aenc(k_13,pk(ctrl_sk[])),!1 = @sid_3]
+@occ55_11 = @occ55_10[!1 = @sid_4]
+k_14 = k_1[srv_cert = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid_4]
+n_10 = n[reg_m = senc((tag_reg[],R0),k_14),ek = aenc(k_14,pk(ctrl_sk[])),!1 = @sid_5]
+goal reachable: b-event(HopSent(secret_msg_reverse[],R2,R1)) && b-event(HopSent(secret_msg_reverse[],APP_R,R2)) && b-event(@p_act(@occ191_11,senc((tag_nonce[],n_8),k_12))) && b-event(@p_act(@occ123_11,senc((tag_nonce[],n_9),k_13))) -> event(RelayGotHop(secret_msg_reverse[],R2,R1))
+Abbreviations:
+@occ191_11 = @occ191_10[!1 = @sid]
+k_12 = k_3[srv_cert_2 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid]
+n_8 = n[reg_m = senc((tag_reg[],R2),k_12),ek = aenc(k_12,pk(ctrl_sk[])),!1 = @sid_1]
+@occ123_11 = @occ123_10[!1 = @sid_2]
+k_13 = k_2[srv_cert_1 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid_2]
+n_9 = n[reg_m = senc((tag_reg[],R1),k_13),ek = aenc(k_13,pk(ctrl_sk[])),!1 = @sid_3]
+goal reachable: b-event(HopSent(secret_msg_reverse[],APP_R,R2)) && b-event(@p_act(@occ191_11,senc((tag_nonce[],n_8),k_12))) -> event(RelayGotHop(secret_msg_reverse[],APP_R,R2))
+Abbreviations:
+@occ191_11 = @occ191_10[!1 = @sid]
+k_12 = k_3[srv_cert_2 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid]
+n_8 = n[reg_m = senc((tag_reg[],R2),k_12),ek = aenc(k_12,pk(ctrl_sk[])),!1 = @sid_1]
+goal reachable: b-event(HopSent(secret_msg[],R0,R1)) && b-event(HopSent(secret_msg[],APP_L,R0)) && b-event(@p_act(@occ55_11,senc((tag_nonce[],n_8),k_12))) && b-event(@p_act(@occ123_11,senc((tag_nonce[],n_9),k_13))) -> event(RelayGotHop(secret_msg[],R0,R1))
+Abbreviations:
+@occ55_11 = @occ55_10[!1 = @sid]
+k_12 = k_1[srv_cert = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid]
+n_8 = n[reg_m = senc((tag_reg[],R0),k_12),ek = aenc(k_12,pk(ctrl_sk[])),!1 = @sid_1]
+@occ123_11 = @occ123_10[!1 = @sid_2]
+k_13 = k_2[srv_cert_1 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid_2]
+n_9 = n[reg_m = senc((tag_reg[],R1),k_13),ek = aenc(k_13,pk(ctrl_sk[])),!1 = @sid_3]
+goal reachable: b-event(HopSent(secret_msg[],R1,R2)) && b-event(HopSent(secret_msg[],R0,R1)) && b-event(HopSent(secret_msg[],APP_L,R0)) && b-event(@p_act(@occ55_11,senc((tag_nonce[],n_8),k_12))) && b-event(@p_act(@occ123_11,senc((tag_nonce[],n_9),k_13))) && b-event(@p_act(@occ191_11,senc((tag_nonce[],n_10),k_14))) -> event(RelayGotHop(secret_msg[],R1,R2))
+Abbreviations:
+@occ55_11 = @occ55_10[!1 = @sid]
+k_12 = k_1[srv_cert = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid]
+n_8 = n[reg_m = senc((tag_reg[],R0),k_12),ek = aenc(k_12,pk(ctrl_sk[])),!1 = @sid_1]
+@occ123_11 = @occ123_10[!1 = @sid_2]
+k_13 = k_2[srv_cert_1 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid_2]
+n_9 = n[reg_m = senc((tag_reg[],R1),k_13),ek = aenc(k_13,pk(ctrl_sk[])),!1 = @sid_3]
+@occ191_11 = @occ191_10[!1 = @sid_4]
+k_14 = k_3[srv_cert_2 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid_4]
+n_10 = n[reg_m = senc((tag_reg[],R2),k_14),ek = aenc(k_14,pk(ctrl_sk[])),!1 = @sid_5]
+goal reachable: b-event(HopSent(secret_msg[],APP_L,R0)) && b-event(@p_act(@occ55_11,senc((tag_nonce[],n_8),k_12))) -> event(RelayGotHop(secret_msg[],APP_L,R0))
+Abbreviations:
+@occ55_11 = @occ55_10[!1 = @sid]
+k_12 = k_1[srv_cert = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid]
+n_8 = n[reg_m = senc((tag_reg[],R0),k_12),ek = aenc(k_12,pk(ctrl_sk[])),!1 = @sid_1]
+RESULT event(RelayGotHop(m,f,t)) ==> event(HopSent(m,f,t)) is true.
+-- Query event(RelayGotHop(x,f,t)) ==> event(RelayLoadedCfg(t,n_8,f,r)) || event(RelayLoadedCfg(t,n_8,l,f)) in process 1.
+Translating the process into Horn clauses...
+Completing...
+200 rules inserted. Base: 200 rules (50 with conclusion selected). Queue: 281 rules.
+400 rules inserted. Base: 399 rules (55 with conclusion selected). Queue: 249 rules.
+600 rules inserted. Base: 594 rules (65 with conclusion selected). Queue: 84 rules.
+800 rules inserted. Base: 732 rules (76 with conclusion selected). Queue: 36 rules.
+1000 rules inserted. Base: 848 rules (98 with conclusion selected). Queue: 14 rules.
+1200 rules inserted. Base: 974 rules (123 with conclusion selected). Queue: 59 rules.
+1400 rules inserted. Base: 1071 rules (136 with conclusion selected). Queue: 4 rules.
+1600 rules inserted. Base: 1132 rules (155 with conclusion selected). Queue: 4 rules.
+Starting query event(RelayGotHop(x,f,t)) ==> event(RelayLoadedCfg(t,n_8,f,r)) || event(RelayLoadedCfg(t,n_8,l,f))
+goal reachable: b-event(RelayLoadedCfg(R2,n_8,R1,APP_R)) && b-event(@p_act(@occ191_12,senc((tag_nonce[],n_8),k_12))) && b-event(RelayLoadedCfg(R1,n_9,R0,R2)) && b-event(@p_act(@occ123_12,senc((tag_nonce[],n_9),k_13))) && b-event(RelayLoadedCfg(R0,n_10,APP_L,R1)) && b-event(@p_act(@occ55_12,senc((tag_nonce[],n_10),k_14))) -> event(RelayGotHop(secret_msg_reverse[],R1,R0))
+Abbreviations:
+k_12 = k_3[srv_cert_2 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid]
+n_8 = n[reg_m = senc((tag_reg[],R2),k_12),ek = aenc(k_12,pk(ctrl_sk[])),!1 = @sid_1]
+@occ191_12 = @occ191_11[!1 = @sid]
+k_13 = k_2[srv_cert_1 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid_2]
+n_9 = n[reg_m = senc((tag_reg[],R1),k_13),ek = aenc(k_13,pk(ctrl_sk[])),!1 = @sid_3]
+@occ123_12 = @occ123_11[!1 = @sid_2]
+k_14 = k_1[srv_cert = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid_4]
+n_10 = n[reg_m = senc((tag_reg[],R0),k_14),ek = aenc(k_14,pk(ctrl_sk[])),!1 = @sid_5]
+@occ55_12 = @occ55_11[!1 = @sid_4]
+goal reachable: b-event(RelayLoadedCfg(R2,n_8,R1,APP_R)) && b-event(@p_act(@occ191_12,senc((tag_nonce[],n_8),k_12))) && b-event(RelayLoadedCfg(R1,n_9,R0,R2)) && b-event(@p_act(@occ123_12,senc((tag_nonce[],n_9),k_13))) -> event(RelayGotHop(secret_msg_reverse[],R2,R1))
+Abbreviations:
+k_12 = k_3[srv_cert_2 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid]
+n_8 = n[reg_m = senc((tag_reg[],R2),k_12),ek = aenc(k_12,pk(ctrl_sk[])),!1 = @sid_1]
+@occ191_12 = @occ191_11[!1 = @sid]
+k_13 = k_2[srv_cert_1 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid_2]
+n_9 = n[reg_m = senc((tag_reg[],R1),k_13),ek = aenc(k_13,pk(ctrl_sk[])),!1 = @sid_3]
+@occ123_12 = @occ123_11[!1 = @sid_2]
+goal reachable: b-event(RelayLoadedCfg(R2,n_8,R1,APP_R)) && b-event(@p_act(@occ191_12,senc((tag_nonce[],n_8),k_12))) -> event(RelayGotHop(secret_msg_reverse[],APP_R,R2))
+Abbreviations:
+k_12 = k_3[srv_cert_2 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid]
+n_8 = n[reg_m = senc((tag_reg[],R2),k_12),ek = aenc(k_12,pk(ctrl_sk[])),!1 = @sid_1]
+@occ191_12 = @occ191_11[!1 = @sid]
+goal reachable: b-event(RelayLoadedCfg(R0,n_8,APP_L,R1)) && b-event(@p_act(@occ55_12,senc((tag_nonce[],n_8),k_12))) && b-event(RelayLoadedCfg(R1,n_9,R0,R2)) && b-event(@p_act(@occ123_12,senc((tag_nonce[],n_9),k_13))) -> event(RelayGotHop(secret_msg[],R0,R1))
+Abbreviations:
+k_12 = k_1[srv_cert = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid]
+n_8 = n[reg_m = senc((tag_reg[],R0),k_12),ek = aenc(k_12,pk(ctrl_sk[])),!1 = @sid_1]
+@occ55_12 = @occ55_11[!1 = @sid]
+k_13 = k_2[srv_cert_1 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid_2]
+n_9 = n[reg_m = senc((tag_reg[],R1),k_13),ek = aenc(k_13,pk(ctrl_sk[])),!1 = @sid_3]
+@occ123_12 = @occ123_11[!1 = @sid_2]
+goal reachable: b-event(RelayLoadedCfg(R0,n_8,APP_L,R1)) && b-event(@p_act(@occ55_12,senc((tag_nonce[],n_8),k_12))) && b-event(RelayLoadedCfg(R1,n_9,R0,R2)) && b-event(@p_act(@occ123_12,senc((tag_nonce[],n_9),k_13))) && b-event(RelayLoadedCfg(R2,n_10,R1,APP_R)) && b-event(@p_act(@occ191_12,senc((tag_nonce[],n_10),k_14))) -> event(RelayGotHop(secret_msg[],R1,R2))
+Abbreviations:
+k_12 = k_1[srv_cert = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid]
+n_8 = n[reg_m = senc((tag_reg[],R0),k_12),ek = aenc(k_12,pk(ctrl_sk[])),!1 = @sid_1]
+@occ55_12 = @occ55_11[!1 = @sid]
+k_13 = k_2[srv_cert_1 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid_2]
+n_9 = n[reg_m = senc((tag_reg[],R1),k_13),ek = aenc(k_13,pk(ctrl_sk[])),!1 = @sid_3]
+@occ123_12 = @occ123_11[!1 = @sid_2]
+k_14 = k_3[srv_cert_2 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid_4]
+n_10 = n[reg_m = senc((tag_reg[],R2),k_14),ek = aenc(k_14,pk(ctrl_sk[])),!1 = @sid_5]
+@occ191_12 = @occ191_11[!1 = @sid_4]
+goal reachable: b-event(RelayLoadedCfg(R0,n_8,APP_L,R1)) && b-event(@p_act(@occ55_12,senc((tag_nonce[],n_8),k_12))) -> event(RelayGotHop(secret_msg[],APP_L,R0))
+Abbreviations:
+k_12 = k_1[srv_cert = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid]
+n_8 = n[reg_m = senc((tag_reg[],R0),k_12),ek = aenc(k_12,pk(ctrl_sk[])),!1 = @sid_1]
+@occ55_12 = @occ55_11[!1 = @sid]
+RESULT event(RelayGotHop(x,f,t)) ==> event(RelayLoadedCfg(t,n_8,f,r)) || event(RelayLoadedCfg(t,n_8,l,f)) is true.
+-- Query event(RelaySentHop(x,f,t)) ==> event(RelayLoadedCfg(f,n_8,l,t)) || event(RelayLoadedCfg(f,n_8,t,r)) in process 1.
+Translating the process into Horn clauses...
+Completing...
+200 rules inserted. Base: 200 rules (50 with conclusion selected). Queue: 281 rules.
+400 rules inserted. Base: 399 rules (55 with conclusion selected). Queue: 249 rules.
+600 rules inserted. Base: 594 rules (65 with conclusion selected). Queue: 84 rules.
+800 rules inserted. Base: 732 rules (76 with conclusion selected). Queue: 36 rules.
+1000 rules inserted. Base: 848 rules (98 with conclusion selected). Queue: 14 rules.
+1200 rules inserted. Base: 974 rules (120 with conclusion selected). Queue: 121 rules.
+1400 rules inserted. Base: 1124 rules (134 with conclusion selected). Queue: 5 rules.
+1600 rules inserted. Base: 1177 rules (152 with conclusion selected). Queue: 6 rules.
+Starting query event(RelaySentHop(x,f,t)) ==> event(RelayLoadedCfg(f,n_8,l,t)) || event(RelayLoadedCfg(f,n_8,t,r))
+goal reachable: b-event(RelayLoadedCfg(R2,n_8,R1,APP_R)) && b-event(@p_act(@occ191_13,senc((tag_nonce[],n_8),k_12))) && b-event(RelayLoadedCfg(R1,n_9,R0,R2)) && b-event(@p_act(@occ123_13,senc((tag_nonce[],n_9),k_13))) && b-event(RelayLoadedCfg(R0,n_10,APP_L,R1)) && b-event(@p_act(@occ55_13,senc((tag_nonce[],n_10),k_14))) -> event(RelaySentHop(secret_msg_reverse[],R0,APP_L))
+Abbreviations:
+k_12 = k_3[srv_cert_2 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid]
+n_8 = n[reg_m = senc((tag_reg[],R2),k_12),ek = aenc(k_12,pk(ctrl_sk[])),!1 = @sid_1]
+@occ191_13 = @occ191_12[!1 = @sid]
+k_13 = k_2[srv_cert_1 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid_2]
+n_9 = n[reg_m = senc((tag_reg[],R1),k_13),ek = aenc(k_13,pk(ctrl_sk[])),!1 = @sid_3]
+@occ123_13 = @occ123_12[!1 = @sid_2]
+k_14 = k_1[srv_cert = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid_4]
+n_10 = n[reg_m = senc((tag_reg[],R0),k_14),ek = aenc(k_14,pk(ctrl_sk[])),!1 = @sid_5]
+@occ55_13 = @occ55_12[!1 = @sid_4]
+goal reachable: b-event(RelayLoadedCfg(R0,n_8,APP_L,R1)) && b-event(@p_act(@occ55_13,senc((tag_nonce[],n_8),k_12))) && b-event(RelayLoadedCfg(R2,n_9,R1,APP_R)) && b-event(@p_act(@occ191_13,senc((tag_nonce[],n_9),k_13))) && b-event(RelayLoadedCfg(R1,n_10,R0,R2)) && b-event(@p_act(@occ123_13,senc((tag_nonce[],n_10),k_14))) -> event(RelaySentHop(secret_msg_reverse[],R1,R0))
+Abbreviations:
+k_12 = k_1[srv_cert = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid]
+n_8 = n[reg_m = senc((tag_reg[],R0),k_12),ek = aenc(k_12,pk(ctrl_sk[])),!1 = @sid_1]
+@occ55_13 = @occ55_12[!1 = @sid]
+k_13 = k_3[srv_cert_2 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid_2]
+n_9 = n[reg_m = senc((tag_reg[],R2),k_13),ek = aenc(k_13,pk(ctrl_sk[])),!1 = @sid_3]
+@occ191_13 = @occ191_12[!1 = @sid_2]
+k_14 = k_2[srv_cert_1 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid_4]
+n_10 = n[reg_m = senc((tag_reg[],R1),k_14),ek = aenc(k_14,pk(ctrl_sk[])),!1 = @sid_5]
+@occ123_13 = @occ123_12[!1 = @sid_4]
+goal reachable: b-event(RelayLoadedCfg(R1,n_8,R0,R2)) && b-event(@p_act(@occ123_13,senc((tag_nonce[],n_8),k_12))) && b-event(RelayLoadedCfg(R2,n_9,R1,APP_R)) && b-event(@p_act(@occ191_13,senc((tag_nonce[],n_9),k_13))) -> event(RelaySentHop(secret_msg_reverse[],R2,R1))
+Abbreviations:
+k_12 = k_2[srv_cert_1 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid]
+n_8 = n[reg_m = senc((tag_reg[],R1),k_12),ek = aenc(k_12,pk(ctrl_sk[])),!1 = @sid_1]
+@occ123_13 = @occ123_12[!1 = @sid]
+k_13 = k_3[srv_cert_2 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid_2]
+n_9 = n[reg_m = senc((tag_reg[],R2),k_13),ek = aenc(k_13,pk(ctrl_sk[])),!1 = @sid_3]
+@occ191_13 = @occ191_12[!1 = @sid_2]
+goal reachable: b-event(RelayLoadedCfg(R1,n_8,R0,R2)) && b-event(@p_act(@occ123_13,senc((tag_nonce[],n_8),k_12))) && b-event(RelayLoadedCfg(R0,n_9,APP_L,R1)) && b-event(@p_act(@occ55_13,senc((tag_nonce[],n_9),k_13))) -> event(RelaySentHop(secret_msg[],R0,R1))
+Abbreviations:
+k_12 = k_2[srv_cert_1 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid]
+n_8 = n[reg_m = senc((tag_reg[],R1),k_12),ek = aenc(k_12,pk(ctrl_sk[])),!1 = @sid_1]
+@occ123_13 = @occ123_12[!1 = @sid]
+k_13 = k_1[srv_cert = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid_2]
+n_9 = n[reg_m = senc((tag_reg[],R0),k_13),ek = aenc(k_13,pk(ctrl_sk[])),!1 = @sid_3]
+@occ55_13 = @occ55_12[!1 = @sid_2]
+goal reachable: b-event(RelayLoadedCfg(R2,n_8,R1,APP_R)) && b-event(@p_act(@occ191_13,senc((tag_nonce[],n_8),k_12))) && b-event(RelayLoadedCfg(R0,n_9,APP_L,R1)) && b-event(@p_act(@occ55_13,senc((tag_nonce[],n_9),k_13))) && b-event(RelayLoadedCfg(R1,n_10,R0,R2)) && b-event(@p_act(@occ123_13,senc((tag_nonce[],n_10),k_14))) -> event(RelaySentHop(secret_msg[],R1,R2))
+Abbreviations:
+k_12 = k_3[srv_cert_2 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid]
+n_8 = n[reg_m = senc((tag_reg[],R2),k_12),ek = aenc(k_12,pk(ctrl_sk[])),!1 = @sid_1]
+@occ191_13 = @occ191_12[!1 = @sid]
+k_13 = k_1[srv_cert = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid_2]
+n_9 = n[reg_m = senc((tag_reg[],R0),k_13),ek = aenc(k_13,pk(ctrl_sk[])),!1 = @sid_3]
+@occ55_13 = @occ55_12[!1 = @sid_2]
+k_14 = k_2[srv_cert_1 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid_4]
+n_10 = n[reg_m = senc((tag_reg[],R1),k_14),ek = aenc(k_14,pk(ctrl_sk[])),!1 = @sid_5]
+@occ123_13 = @occ123_12[!1 = @sid_4]
+goal reachable: b-event(RelayLoadedCfg(R0,n_8,APP_L,R1)) && b-event(@p_act(@occ55_13,senc((tag_nonce[],n_8),k_12))) && b-event(RelayLoadedCfg(R1,n_9,R0,R2)) && b-event(@p_act(@occ123_13,senc((tag_nonce[],n_9),k_13))) && b-event(RelayLoadedCfg(R2,n_10,R1,APP_R)) && b-event(@p_act(@occ191_13,senc((tag_nonce[],n_10),k_14))) -> event(RelaySentHop(secret_msg[],R2,APP_R))
+Abbreviations:
+k_12 = k_1[srv_cert = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid]
+n_8 = n[reg_m = senc((tag_reg[],R0),k_12),ek = aenc(k_12,pk(ctrl_sk[])),!1 = @sid_1]
+@occ55_13 = @occ55_12[!1 = @sid]
+k_13 = k_2[srv_cert_1 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid_2]
+n_9 = n[reg_m = senc((tag_reg[],R1),k_13),ek = aenc(k_13,pk(ctrl_sk[])),!1 = @sid_3]
+@occ123_13 = @occ123_12[!1 = @sid_2]
+k_14 = k_3[srv_cert_2 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid_4]
+n_10 = n[reg_m = senc((tag_reg[],R2),k_14),ek = aenc(k_14,pk(ctrl_sk[])),!1 = @sid_5]
+@occ191_13 = @occ191_12[!1 = @sid_4]
+RESULT event(RelaySentHop(x,f,t)) ==> event(RelayLoadedCfg(f,n_8,l,t)) || event(RelayLoadedCfg(f,n_8,t,r)) is true.
+-- Query event(RelayLoadedCfg(rid_8,n_8,l,r)) ==> event(CtrlSentCfg(rid_8,n_8,l,r)) in process 1.
+Translating the process into Horn clauses...
+Completing...
+200 rules inserted. Base: 200 rules (50 with conclusion selected). Queue: 252 rules.
+400 rules inserted. Base: 398 rules (57 with conclusion selected). Queue: 198 rules.
+600 rules inserted. Base: 583 rules (67 with conclusion selected). Queue: 44 rules.
+800 rules inserted. Base: 712 rules (83 with conclusion selected). Queue: 30 rules.
+1000 rules inserted. Base: 819 rules (101 with conclusion selected). Queue: 10 rules.
+1200 rules inserted. Base: 947 rules (126 with conclusion selected). Queue: 44 rules.
+1400 rules inserted. Base: 1040 rules (147 with conclusion selected). Queue: 6 rules.
+Starting query event(RelayLoadedCfg(rid_8,n_8,l,r)) ==> event(CtrlSentCfg(rid_8,n_8,l,r))
+goal reachable: b-event(CtrlSentCfg(R0,n_8,APP_L,R1)) && b-event(@p_act(@occ55_14,senc((tag_nonce[],n_8),k_12))) -> event(RelayLoadedCfg(R0,n_8,APP_L,R1))
+Abbreviations:
+k_12 = k_1[srv_cert = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid]
+n_8 = n[reg_m = senc((tag_reg[],R0),k_12),ek = aenc(k_12,pk(ctrl_sk[])),!1 = @sid_1]
+@occ55_14 = @occ55_13[!1 = @sid]
+goal reachable: b-event(CtrlSentCfg(R1,n_8,R0,R2)) && b-event(@p_act(@occ123_14,senc((tag_nonce[],n_8),k_12))) -> event(RelayLoadedCfg(R1,n_8,R0,R2))
+Abbreviations:
+k_12 = k_2[srv_cert_1 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid]
+n_8 = n[reg_m = senc((tag_reg[],R1),k_12),ek = aenc(k_12,pk(ctrl_sk[])),!1 = @sid_1]
+@occ123_14 = @occ123_13[!1 = @sid]
+goal reachable: b-event(CtrlSentCfg(R2,n_8,R1,APP_R)) && b-event(@p_act(@occ191_14,senc((tag_nonce[],n_8),k_12))) -> event(RelayLoadedCfg(R2,n_8,R1,APP_R))
+Abbreviations:
+k_12 = k_3[srv_cert_2 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid]
+n_8 = n[reg_m = senc((tag_reg[],R2),k_12),ek = aenc(k_12,pk(ctrl_sk[])),!1 = @sid_1]
+@occ191_14 = @occ191_13[!1 = @sid]
+RESULT event(RelayLoadedCfg(rid_8,n_8,l,r)) ==> event(CtrlSentCfg(rid_8,n_8,l,r)) is true.
+-- Query event(RelayGotCert(rid_8,n_8,m,pb)) ==> event(CtrlIssuedCert(rid_8,n_8,m,pb)) in process 1.
+Translating the process into Horn clauses...
+Completing...
+200 rules inserted. Base: 200 rules (50 with conclusion selected). Queue: 252 rules.
+400 rules inserted. Base: 398 rules (57 with conclusion selected). Queue: 198 rules.
+600 rules inserted. Base: 585 rules (67 with conclusion selected). Queue: 44 rules.
+800 rules inserted. Base: 715 rules (83 with conclusion selected). Queue: 35 rules.
+1000 rules inserted. Base: 825 rules (98 with conclusion selected). Queue: 6 rules.
+1200 rules inserted. Base: 960 rules (128 with conclusion selected). Queue: 33 rules.
+1400 rules inserted. Base: 1046 rules (147 with conclusion selected). Queue: 4 rules.
+Starting query event(RelayGotCert(rid_8,n_8,m,pb)) ==> event(CtrlIssuedCert(rid_8,n_8,m,pb))
+goal reachable: b-event(CtrlIssuedCert(R0,n_8,meas(R0),pkb(pk(relay_sk_13)))) && b-event(@p_act(@occ55_15,senc((tag_nonce[],n_8),k_12))) -> event(RelayGotCert(R0,n_8,meas(R0),pkb(pk(relay_sk_13))))
+Abbreviations:
+k_12 = k_1[srv_cert = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid]
+n_8 = n[reg_m = senc((tag_reg[],R0),k_12),ek = aenc(k_12,pk(ctrl_sk[])),!1 = @sid_1]
+relay_sk_13 = relay_sk[cfg_m = senc((tag_cfg[],APP_L,R1),k_12),auth_m = senc(tag_authed[],k_12),nonce_m = senc((tag_nonce[],n_8),k_12),srv_cert = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid]
+@occ55_15 = @occ55_14[!1 = @sid]
+goal reachable: b-event(CtrlIssuedCert(R1,n_8,meas(R1),pkb(pk(relay_sk_13)))) && b-event(@p_act(@occ123_15,senc((tag_nonce[],n_8),k_12))) -> event(RelayGotCert(R1,n_8,meas(R1),pkb(pk(relay_sk_13))))
+Abbreviations:
+k_12 = k_2[srv_cert_1 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid]
+n_8 = n[reg_m = senc((tag_reg[],R1),k_12),ek = aenc(k_12,pk(ctrl_sk[])),!1 = @sid_1]
+relay_sk_13 = relay_sk_2[cfg_m_1 = senc((tag_cfg[],R0,R2),k_12),auth_m_1 = senc(tag_authed[],k_12),nonce_m_1 = senc((tag_nonce[],n_8),k_12),srv_cert_1 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid]
+@occ123_15 = @occ123_14[!1 = @sid]
+goal reachable: b-event(CtrlIssuedCert(R2,n_8,meas(R2),pkb(pk(relay_sk_13)))) && b-event(@p_act(@occ191_15,senc((tag_nonce[],n_8),k_12))) -> event(RelayGotCert(R2,n_8,meas(R2),pkb(pk(relay_sk_13))))
+Abbreviations:
+k_12 = k_3[srv_cert_2 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid]
+n_8 = n[reg_m = senc((tag_reg[],R2),k_12),ek = aenc(k_12,pk(ctrl_sk[])),!1 = @sid_1]
+relay_sk_13 = relay_sk_4[cfg_m_2 = senc((tag_cfg[],R1,APP_R),k_12),auth_m_2 = senc(tag_authed[],k_12),nonce_m_2 = senc((tag_nonce[],n_8),k_12),srv_cert_2 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid]
+@occ191_15 = @occ191_14[!1 = @sid]
+RESULT event(RelayGotCert(rid_8,n_8,m,pb)) ==> event(CtrlIssuedCert(rid_8,n_8,m,pb)) is true.
+-- Query inj-event(HopPeerAuthenticated(f,t,ek_17,n_8)) ==> inj-event(HopSignedTranscript(f,t,ek_17,n_8)) in process 1.
+Translating the process into Horn clauses...
+Completing...
+200 rules inserted. Base: 200 rules (50 with conclusion selected). Queue: 261 rules.
+400 rules inserted. Base: 398 rules (57 with conclusion selected). Queue: 212 rules.
+600 rules inserted. Base: 590 rules (67 with conclusion selected). Queue: 43 rules.
+800 rules inserted. Base: 716 rules (83 with conclusion selected). Queue: 36 rules.
+1000 rules inserted. Base: 822 rules (105 with conclusion selected). Queue: 13 rules.
+1200 rules inserted. Base: 972 rules (123 with conclusion selected). Queue: 41 rules.
+1400 rules inserted. Base: 1057 rules (140 with conclusion selected). Queue: 4 rules.
+1600 rules inserted. Base: 1112 rules (160 with conclusion selected). Queue: 9 rules.
+Starting query inj-event(HopPeerAuthenticated(f,t,ek_17,n_8)) ==> inj-event(HopSignedTranscript(f,t,ek_17,n_8))
+goal reachable: b-inj-event(HopSignedTranscript(R0,R1,aenc(k_out_6,pk(relay_sk_13)),challenge_16),@occ106_1) && b-inj-event(HopSignedTranscript(APP_L,R0,aenc(k_12,pk(relay_sk_14)),challenge_17),@occ495_1) && b-event(@p_act(@occ55_16,senc((tag_nonce[],n_8),k_13))) && b-event(@p_act(@occ123_16,senc((tag_nonce[],n_9),k_14))) -> inj-event(HopPeerAuthenticated(R0,R1,aenc(k_out_6,pk(relay_sk_13)),challenge_16),@occ158_1)
+The 1st, 2nd, 3rd, 4th hypotheses occur strictly before the conclusion.
+Abbreviations:
+k_14 = k_2[srv_cert_1 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid]
+n_9 = n[reg_m = senc((tag_reg[],R1),k_14),ek = aenc(k_14,pk(ctrl_sk[])),!1 = @sid_1]
+relay_sk_13 = relay_sk_2[cfg_m_1 = senc((tag_cfg[],R0,R2),k_14),auth_m_1 = senc(tag_authed[],k_14),nonce_m_1 = senc((tag_nonce[],n_9),k_14),srv_cert_1 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid]
+k_13 = k_1[srv_cert = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid_2]
+n_8 = n[reg_m = senc((tag_reg[],R0),k_13),ek = aenc(k_13,pk(ctrl_sk[])),!1 = @sid_3]
+relay_sk_14 = relay_sk[cfg_m = senc((tag_cfg[],APP_L,R1),k_13),auth_m = senc(tag_authed[],k_13),nonce_m = senc((tag_nonce[],n_8),k_13),srv_cert = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid_2]
+k_12 = k_8[relay_cert_8 = cert_make(R0,pkb(pk(relay_sk_14)),ca_sk[])]
+challenge_17 = challenge[ek_1 = aenc(k_12,pk(relay_sk_14)),peer_cert = cert_make(APP_L,pkb(pk(app_l_sk[])),ca_sk[]),!2 = @sid_4,cert_m = senc((tag_cert[],cert_make(R0,pkb(pk(relay_sk_14)),ca_sk[])),k_13),cfg_m = senc((tag_cfg[],APP_L,R1),k_13),auth_m = senc(tag_authed[],k_13),nonce_m = senc((tag_nonce[],n_8),k_13),srv_cert = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid_2]
+k_out_6 = k_out[fwd_cert = cert_make(R1,pkb(pk(relay_sk_13)),ca_sk[]),record = senc((tag_hop_data[],secret_msg[],APP_L,R0),k_12),proof_rx = sign((tag_hop_proof[],APP_L,R0,aenc(k_12,pk(relay_sk_14)),challenge_17),app_l_sk[]),ek_1 = aenc(k_12,pk(relay_sk_14)),peer_cert = cert_make(APP_L,pkb(pk(app_l_sk[])),ca_sk[]),!2 = @sid_4,cert_m = senc((tag_cert[],cert_make(R0,pkb(pk(relay_sk_14)),ca_sk[])),k_13),cfg_m = senc((tag_cfg[],APP_L,R1),k_13),auth_m = senc(tag_authed[],k_13),nonce_m = senc((tag_nonce[],n_8),k_13),srv_cert = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid_2]
+challenge_16 = challenge_2[ek_3 = aenc(k_out_6,pk(relay_sk_13)),peer_cert_1 = cert_make(R0,pkb(pk(relay_sk_14)),ca_sk[]),!2 = @sid_5,cert_m_1 = senc((tag_cert[],cert_make(R1,pkb(pk(relay_sk_13)),ca_sk[])),k_14),cfg_m_1 = senc((tag_cfg[],R0,R2),k_14),auth_m_1 = senc(tag_authed[],k_14),nonce_m_1 = senc((tag_nonce[],n_9),k_14),srv_cert_1 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid]
+@occ158_1 = @occ158[proof_rx_1 = sign((tag_hop_proof[],R0,R1,aenc(k_out_6,pk(relay_sk_13)),challenge_16),relay_sk_14),ek_3 = aenc(k_out_6,pk(relay_sk_13)),peer_cert_1 = cert_make(R0,pkb(pk(relay_sk_14)),ca_sk[]),!2 = @sid_5,cert_m_1 = senc((tag_cert[],cert_make(R1,pkb(pk(relay_sk_13)),ca_sk[])),k_14),cfg_m_1 = senc((tag_cfg[],R0,R2),k_14),auth_m_1 = senc(tag_authed[],k_14),nonce_m_1 = senc((tag_nonce[],n_9),k_14),srv_cert_1 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid]
+@occ106_1 = @occ106[challenge_m = senc((tag_hop_challenge[],R0,R1,challenge_16),k_out_6),fwd_cert = cert_make(R1,pkb(pk(relay_sk_13)),ca_sk[]),record = senc((tag_hop_data[],secret_msg[],APP_L,R0),k_12),proof_rx = sign((tag_hop_proof[],APP_L,R0,aenc(k_12,pk(relay_sk_14)),challenge_17),app_l_sk[]),ek_1 = aenc(k_12,pk(relay_sk_14)),peer_cert = cert_make(APP_L,pkb(pk(app_l_sk[])),ca_sk[]),!2 = @sid_4,cert_m = senc((tag_cert[],cert_make(R0,pkb(pk(relay_sk_14)),ca_sk[])),k_13),cfg_m = senc((tag_cfg[],APP_L,R1),k_13),auth_m = senc(tag_authed[],k_13),nonce_m = senc((tag_nonce[],n_8),k_13),srv_cert = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid_2]
+@occ495_1 = @occ495[challenge_m_6 = senc((tag_hop_challenge[],APP_L,R0,challenge_17),k_12),relay_cert_8 = cert_make(R0,pkb(pk(relay_sk_14)),ca_sk[])]
+@occ55_16 = @occ55_15[!1 = @sid_2]
+@occ123_16 = @occ123_15[!1 = @sid]
+goal reachable: b-inj-event(HopSignedTranscript(R0,APP_L,aenc(k_out_6,pk(app_l_sk[])),challenge_16),@occ106_1) && b-inj-event(HopSignedTranscript(R1,R0,aenc(k_out_7,pk(relay_sk_13)),challenge_17),@occ174_1) && b-inj-event(HopSignedTranscript(R2,R1,aenc(k_out_8,pk(relay_sk_14)),challenge_18),@occ242_1) && b-inj-event(HopSignedTranscript(APP_R,R2,aenc(k_12,pk(relay_sk_15)),challenge_19),@occ514_1) && b-event(@p_act(@occ191_16,senc((tag_nonce[],n_8),k_13))) && b-event(@p_act(@occ123_16,senc((tag_nonce[],n_9),k_14))) && b-event(@p_act(@occ55_16,senc((tag_nonce[],n_10),k_15))) -> inj-event(HopPeerAuthenticated(R0,APP_L,aenc(k_out_6,pk(app_l_sk[])),challenge_16),@occ533_1)
+The 1st, 2nd, 3rd, 4th, 5th, 6th, 7th hypotheses occur strictly before the conclusion.
+Abbreviations:
+k_15 = k_1[srv_cert = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid]
+n_10 = n[reg_m = senc((tag_reg[],R0),k_15),ek = aenc(k_15,pk(ctrl_sk[])),!1 = @sid_1]
+relay_sk_13 = relay_sk[cfg_m = senc((tag_cfg[],APP_L,R1),k_15),auth_m = senc(tag_authed[],k_15),nonce_m = senc((tag_nonce[],n_10),k_15),srv_cert = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid]
+k_14 = k_2[srv_cert_1 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid_2]
+n_9 = n[reg_m = senc((tag_reg[],R1),k_14),ek = aenc(k_14,pk(ctrl_sk[])),!1 = @sid_3]
+relay_sk_14 = relay_sk_2[cfg_m_1 = senc((tag_cfg[],R0,R2),k_14),auth_m_1 = senc(tag_authed[],k_14),nonce_m_1 = senc((tag_nonce[],n_9),k_14),srv_cert_1 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid_2]
+k_13 = k_3[srv_cert_2 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid_4]
+n_8 = n[reg_m = senc((tag_reg[],R2),k_13),ek = aenc(k_13,pk(ctrl_sk[])),!1 = @sid_5]
+relay_sk_15 = relay_sk_4[cfg_m_2 = senc((tag_cfg[],R1,APP_R),k_13),auth_m_2 = senc(tag_authed[],k_13),nonce_m_2 = senc((tag_nonce[],n_8),k_13),srv_cert_2 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid_4]
+k_12 = k_9[relay_cert_9 = cert_make(R2,pkb(pk(relay_sk_15)),ca_sk[])]
+challenge_19 = challenge_4[ek_5 = aenc(k_12,pk(relay_sk_15)),peer_cert_2 = cert_make(APP_R,pkb(pk(app_r_sk[])),ca_sk[]),!2 = @sid_6,cert_m_2 = senc((tag_cert[],cert_make(R2,pkb(pk(relay_sk_15)),ca_sk[])),k_13),cfg_m_2 = senc((tag_cfg[],R1,APP_R),k_13),auth_m_2 = senc(tag_authed[],k_13),nonce_m_2 = senc((tag_nonce[],n_8),k_13),srv_cert_2 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid_4]
+k_out_8 = k_out_2[fwd_cert_2 = cert_make(R1,pkb(pk(relay_sk_14)),ca_sk[]),record_2 = senc((tag_hop_data[],secret_msg_reverse[],APP_R,R2),k_12),proof_rx_2 = sign((tag_hop_proof[],APP_R,R2,aenc(k_12,pk(relay_sk_15)),challenge_19),app_r_sk[]),ek_5 = aenc(k_12,pk(relay_sk_15)),peer_cert_2 = cert_make(APP_R,pkb(pk(app_r_sk[])),ca_sk[]),!2 = @sid_6,cert_m_2 = senc((tag_cert[],cert_make(R2,pkb(pk(relay_sk_15)),ca_sk[])),k_13),cfg_m_2 = senc((tag_cfg[],R1,APP_R),k_13),auth_m_2 = senc(tag_authed[],k_13),nonce_m_2 = senc((tag_nonce[],n_8),k_13),srv_cert_2 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid_4]
+challenge_18 = challenge_2[ek_3 = aenc(k_out_8,pk(relay_sk_14)),peer_cert_1 = cert_make(R2,pkb(pk(relay_sk_15)),ca_sk[]),!2 = @sid_7,cert_m_1 = senc((tag_cert[],cert_make(R1,pkb(pk(relay_sk_14)),ca_sk[])),k_14),cfg_m_1 = senc((tag_cfg[],R0,R2),k_14),auth_m_1 = senc(tag_authed[],k_14),nonce_m_1 = senc((tag_nonce[],n_9),k_14),srv_cert_1 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid_2]
+k_out_7 = k_out_1[fwd_cert_1 = cert_make(R0,pkb(pk(relay_sk_13)),ca_sk[]),record_1 = senc((tag_hop_data[],qkd_enc(secret_msg_reverse[],qkd_k(R2,R1)),R2,R1),k_out_8),proof_rx_1 = sign((tag_hop_proof[],R2,R1,aenc(k_out_8,pk(relay_sk_14)),challenge_18),relay_sk_15),ek_3 = aenc(k_out_8,pk(relay_sk_14)),peer_cert_1 = cert_make(R2,pkb(pk(relay_sk_15)),ca_sk[]),!2 = @sid_7,cert_m_1 = senc((tag_cert[],cert_make(R1,pkb(pk(relay_sk_14)),ca_sk[])),k_14),cfg_m_1 = senc((tag_cfg[],R0,R2),k_14),auth_m_1 = senc(tag_authed[],k_14),nonce_m_1 = senc((tag_nonce[],n_9),k_14),srv_cert_1 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid_2]
+challenge_17 = challenge[ek_1 = aenc(k_out_7,pk(relay_sk_13)),peer_cert = cert_make(R1,pkb(pk(relay_sk_14)),ca_sk[]),!2 = @sid_8,cert_m = senc((tag_cert[],cert_make(R0,pkb(pk(relay_sk_13)),ca_sk[])),k_15),cfg_m = senc((tag_cfg[],APP_L,R1),k_15),auth_m = senc(tag_authed[],k_15),nonce_m = senc((tag_nonce[],n_10),k_15),srv_cert = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid]
+k_out_6 = k_out[fwd_cert = cert_make(APP_L,pkb(pk(app_l_sk[])),ca_sk[]),record = senc((tag_hop_data[],qkd_enc(secret_msg_reverse[],qkd_k(R1,R0)),R1,R0),k_out_7),proof_rx = sign((tag_hop_proof[],R1,R0,aenc(k_out_7,pk(relay_sk_13)),challenge_17),relay_sk_14),ek_1 = aenc(k_out_7,pk(relay_sk_13)),peer_cert = cert_make(R1,pkb(pk(relay_sk_14)),ca_sk[]),!2 = @sid_8,cert_m = senc((tag_cert[],cert_make(R0,pkb(pk(relay_sk_13)),ca_sk[])),k_15),cfg_m = senc((tag_cfg[],APP_L,R1),k_15),auth_m = senc(tag_authed[],k_15),nonce_m = senc((tag_nonce[],n_10),k_15),srv_cert = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid]
+challenge_16 = challenge_14[ek_15 = aenc(k_out_6,pk(app_l_sk[])),peer_cert_6 = cert_make(R0,pkb(pk(relay_sk_13)),ca_sk[]),!1 = @sid_9]
+@occ533_1 = @occ533[proof_rx_6 = sign((tag_hop_proof[],R0,APP_L,aenc(k_out_6,pk(app_l_sk[])),challenge_16),relay_sk_13),ek_15 = aenc(k_out_6,pk(app_l_sk[])),peer_cert_6 = cert_make(R0,pkb(pk(relay_sk_13)),ca_sk[]),!1 = @sid_9]
+@occ106_1 = @occ106[challenge_m = senc((tag_hop_challenge[],R0,APP_L,challenge_16),k_out_6),fwd_cert = cert_make(APP_L,pkb(pk(app_l_sk[])),ca_sk[]),record = senc((tag_hop_data[],qkd_enc(secret_msg_reverse[],qkd_k(R1,R0)),R1,R0),k_out_7),proof_rx = sign((tag_hop_proof[],R1,R0,aenc(k_out_7,pk(relay_sk_13)),challenge_17),relay_sk_14),ek_1 = aenc(k_out_7,pk(relay_sk_13)),peer_cert = cert_make(R1,pkb(pk(relay_sk_14)),ca_sk[]),!2 = @sid_8,cert_m = senc((tag_cert[],cert_make(R0,pkb(pk(relay_sk_13)),ca_sk[])),k_15),cfg_m = senc((tag_cfg[],APP_L,R1),k_15),auth_m = senc(tag_authed[],k_15),nonce_m = senc((tag_nonce[],n_10),k_15),srv_cert = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid]
+@occ174_1 = @occ174[challenge_m_1 = senc((tag_hop_challenge[],R1,R0,challenge_17),k_out_7),fwd_cert_1 = cert_make(R0,pkb(pk(relay_sk_13)),ca_sk[]),record_1 = senc((tag_hop_data[],qkd_enc(secret_msg_reverse[],qkd_k(R2,R1)),R2,R1),k_out_8),proof_rx_1 = sign((tag_hop_proof[],R2,R1,aenc(k_out_8,pk(relay_sk_14)),challenge_18),relay_sk_15),ek_3 = aenc(k_out_8,pk(relay_sk_14)),peer_cert_1 = cert_make(R2,pkb(pk(relay_sk_15)),ca_sk[]),!2 = @sid_7,cert_m_1 = senc((tag_cert[],cert_make(R1,pkb(pk(relay_sk_14)),ca_sk[])),k_14),cfg_m_1 = senc((tag_cfg[],R0,R2),k_14),auth_m_1 = senc(tag_authed[],k_14),nonce_m_1 = senc((tag_nonce[],n_9),k_14),srv_cert_1 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid_2]
+@occ242_1 = @occ242[challenge_m_2 = senc((tag_hop_challenge[],R2,R1,challenge_18),k_out_8),fwd_cert_2 = cert_make(R1,pkb(pk(relay_sk_14)),ca_sk[]),record_2 = senc((tag_hop_data[],secret_msg_reverse[],APP_R,R2),k_12),proof_rx_2 = sign((tag_hop_proof[],APP_R,R2,aenc(k_12,pk(relay_sk_15)),challenge_19),app_r_sk[]),ek_5 = aenc(k_12,pk(relay_sk_15)),peer_cert_2 = cert_make(APP_R,pkb(pk(app_r_sk[])),ca_sk[]),!2 = @sid_6,cert_m_2 = senc((tag_cert[],cert_make(R2,pkb(pk(relay_sk_15)),ca_sk[])),k_13),cfg_m_2 = senc((tag_cfg[],R1,APP_R),k_13),auth_m_2 = senc(tag_authed[],k_13),nonce_m_2 = senc((tag_nonce[],n_8),k_13),srv_cert_2 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid_4]
+@occ514_1 = @occ514[challenge_m_7 = senc((tag_hop_challenge[],APP_R,R2,challenge_19),k_12),relay_cert_9 = cert_make(R2,pkb(pk(relay_sk_15)),ca_sk[])]
+@occ191_16 = @occ191_15[!1 = @sid_4]
+@occ123_16 = @occ123_15[!1 = @sid_2]
+@occ55_16 = @occ55_15[!1 = @sid]
+goal reachable: b-inj-event(HopSignedTranscript(R1,R0,aenc(k_out_6,pk(relay_sk_13)),challenge_16),@occ174_1) && b-inj-event(HopSignedTranscript(R2,R1,aenc(k_out_7,pk(relay_sk_14)),challenge_17),@occ242_1) && b-inj-event(HopSignedTranscript(APP_R,R2,aenc(k_12,pk(relay_sk_15)),challenge_18),@occ514_1) && b-event(@p_act(@occ191_16,senc((tag_nonce[],n_8),k_13))) && b-event(@p_act(@occ123_16,senc((tag_nonce[],n_9),k_14))) && b-event(@p_act(@occ55_16,senc((tag_nonce[],n_10),k_15))) -> inj-event(HopPeerAuthenticated(R1,R0,aenc(k_out_6,pk(relay_sk_13)),challenge_16),@occ90_1)
+The 1st, 2nd, 3rd, 4th, 5th, 6th hypotheses occur strictly before the conclusion.
+Abbreviations:
+k_15 = k_1[srv_cert = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid]
+n_10 = n[reg_m = senc((tag_reg[],R0),k_15),ek = aenc(k_15,pk(ctrl_sk[])),!1 = @sid_1]
+relay_sk_13 = relay_sk[cfg_m = senc((tag_cfg[],APP_L,R1),k_15),auth_m = senc(tag_authed[],k_15),nonce_m = senc((tag_nonce[],n_10),k_15),srv_cert = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid]
+k_14 = k_2[srv_cert_1 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid_2]
+n_9 = n[reg_m = senc((tag_reg[],R1),k_14),ek = aenc(k_14,pk(ctrl_sk[])),!1 = @sid_3]
+relay_sk_14 = relay_sk_2[cfg_m_1 = senc((tag_cfg[],R0,R2),k_14),auth_m_1 = senc(tag_authed[],k_14),nonce_m_1 = senc((tag_nonce[],n_9),k_14),srv_cert_1 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid_2]
+k_13 = k_3[srv_cert_2 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid_4]
+n_8 = n[reg_m = senc((tag_reg[],R2),k_13),ek = aenc(k_13,pk(ctrl_sk[])),!1 = @sid_5]
+relay_sk_15 = relay_sk_4[cfg_m_2 = senc((tag_cfg[],R1,APP_R),k_13),auth_m_2 = senc(tag_authed[],k_13),nonce_m_2 = senc((tag_nonce[],n_8),k_13),srv_cert_2 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid_4]
+k_12 = k_9[relay_cert_9 = cert_make(R2,pkb(pk(relay_sk_15)),ca_sk[])]
+challenge_18 = challenge_4[ek_5 = aenc(k_12,pk(relay_sk_15)),peer_cert_2 = cert_make(APP_R,pkb(pk(app_r_sk[])),ca_sk[]),!2 = @sid_6,cert_m_2 = senc((tag_cert[],cert_make(R2,pkb(pk(relay_sk_15)),ca_sk[])),k_13),cfg_m_2 = senc((tag_cfg[],R1,APP_R),k_13),auth_m_2 = senc(tag_authed[],k_13),nonce_m_2 = senc((tag_nonce[],n_8),k_13),srv_cert_2 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid_4]
+k_out_7 = k_out_2[fwd_cert_2 = cert_make(R1,pkb(pk(relay_sk_14)),ca_sk[]),record_2 = senc((tag_hop_data[],secret_msg_reverse[],APP_R,R2),k_12),proof_rx_2 = sign((tag_hop_proof[],APP_R,R2,aenc(k_12,pk(relay_sk_15)),challenge_18),app_r_sk[]),ek_5 = aenc(k_12,pk(relay_sk_15)),peer_cert_2 = cert_make(APP_R,pkb(pk(app_r_sk[])),ca_sk[]),!2 = @sid_6,cert_m_2 = senc((tag_cert[],cert_make(R2,pkb(pk(relay_sk_15)),ca_sk[])),k_13),cfg_m_2 = senc((tag_cfg[],R1,APP_R),k_13),auth_m_2 = senc(tag_authed[],k_13),nonce_m_2 = senc((tag_nonce[],n_8),k_13),srv_cert_2 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid_4]
+challenge_17 = challenge_2[ek_3 = aenc(k_out_7,pk(relay_sk_14)),peer_cert_1 = cert_make(R2,pkb(pk(relay_sk_15)),ca_sk[]),!2 = @sid_7,cert_m_1 = senc((tag_cert[],cert_make(R1,pkb(pk(relay_sk_14)),ca_sk[])),k_14),cfg_m_1 = senc((tag_cfg[],R0,R2),k_14),auth_m_1 = senc(tag_authed[],k_14),nonce_m_1 = senc((tag_nonce[],n_9),k_14),srv_cert_1 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid_2]
+k_out_6 = k_out_1[fwd_cert_1 = cert_make(R0,pkb(pk(relay_sk_13)),ca_sk[]),record_1 = senc((tag_hop_data[],qkd_enc(secret_msg_reverse[],qkd_k(R2,R1)),R2,R1),k_out_7),proof_rx_1 = sign((tag_hop_proof[],R2,R1,aenc(k_out_7,pk(relay_sk_14)),challenge_17),relay_sk_15),ek_3 = aenc(k_out_7,pk(relay_sk_14)),peer_cert_1 = cert_make(R2,pkb(pk(relay_sk_15)),ca_sk[]),!2 = @sid_7,cert_m_1 = senc((tag_cert[],cert_make(R1,pkb(pk(relay_sk_14)),ca_sk[])),k_14),cfg_m_1 = senc((tag_cfg[],R0,R2),k_14),auth_m_1 = senc(tag_authed[],k_14),nonce_m_1 = senc((tag_nonce[],n_9),k_14),srv_cert_1 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid_2]
+challenge_16 = challenge[ek_1 = aenc(k_out_6,pk(relay_sk_13)),peer_cert = cert_make(R1,pkb(pk(relay_sk_14)),ca_sk[]),!2 = @sid_8,cert_m = senc((tag_cert[],cert_make(R0,pkb(pk(relay_sk_13)),ca_sk[])),k_15),cfg_m = senc((tag_cfg[],APP_L,R1),k_15),auth_m = senc(tag_authed[],k_15),nonce_m = senc((tag_nonce[],n_10),k_15),srv_cert = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid]
+@occ90_1 = @occ90[proof_rx = sign((tag_hop_proof[],R1,R0,aenc(k_out_6,pk(relay_sk_13)),challenge_16),relay_sk_14),ek_1 = aenc(k_out_6,pk(relay_sk_13)),peer_cert = cert_make(R1,pkb(pk(relay_sk_14)),ca_sk[]),!2 = @sid_8,cert_m = senc((tag_cert[],cert_make(R0,pkb(pk(relay_sk_13)),ca_sk[])),k_15),cfg_m = senc((tag_cfg[],APP_L,R1),k_15),auth_m = senc(tag_authed[],k_15),nonce_m = senc((tag_nonce[],n_10),k_15),srv_cert = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid]
+@occ174_1 = @occ174[challenge_m_1 = senc((tag_hop_challenge[],R1,R0,challenge_16),k_out_6),fwd_cert_1 = cert_make(R0,pkb(pk(relay_sk_13)),ca_sk[]),record_1 = senc((tag_hop_data[],qkd_enc(secret_msg_reverse[],qkd_k(R2,R1)),R2,R1),k_out_7),proof_rx_1 = sign((tag_hop_proof[],R2,R1,aenc(k_out_7,pk(relay_sk_14)),challenge_17),relay_sk_15),ek_3 = aenc(k_out_7,pk(relay_sk_14)),peer_cert_1 = cert_make(R2,pkb(pk(relay_sk_15)),ca_sk[]),!2 = @sid_7,cert_m_1 = senc((tag_cert[],cert_make(R1,pkb(pk(relay_sk_14)),ca_sk[])),k_14),cfg_m_1 = senc((tag_cfg[],R0,R2),k_14),auth_m_1 = senc(tag_authed[],k_14),nonce_m_1 = senc((tag_nonce[],n_9),k_14),srv_cert_1 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid_2]
+@occ242_1 = @occ242[challenge_m_2 = senc((tag_hop_challenge[],R2,R1,challenge_17),k_out_7),fwd_cert_2 = cert_make(R1,pkb(pk(relay_sk_14)),ca_sk[]),record_2 = senc((tag_hop_data[],secret_msg_reverse[],APP_R,R2),k_12),proof_rx_2 = sign((tag_hop_proof[],APP_R,R2,aenc(k_12,pk(relay_sk_15)),challenge_18),app_r_sk[]),ek_5 = aenc(k_12,pk(relay_sk_15)),peer_cert_2 = cert_make(APP_R,pkb(pk(app_r_sk[])),ca_sk[]),!2 = @sid_6,cert_m_2 = senc((tag_cert[],cert_make(R2,pkb(pk(relay_sk_15)),ca_sk[])),k_13),cfg_m_2 = senc((tag_cfg[],R1,APP_R),k_13),auth_m_2 = senc(tag_authed[],k_13),nonce_m_2 = senc((tag_nonce[],n_8),k_13),srv_cert_2 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid_4]
+@occ514_1 = @occ514[challenge_m_7 = senc((tag_hop_challenge[],APP_R,R2,challenge_18),k_12),relay_cert_9 = cert_make(R2,pkb(pk(relay_sk_15)),ca_sk[])]
+@occ191_16 = @occ191_15[!1 = @sid_4]
+@occ123_16 = @occ123_15[!1 = @sid_2]
+@occ55_16 = @occ55_15[!1 = @sid]
+goal reachable: b-inj-event(HopSignedTranscript(R1,R2,aenc(k_out_6,pk(relay_sk_13)),challenge_16),@occ174_1) && b-inj-event(HopSignedTranscript(R0,R1,aenc(k_out_7,pk(relay_sk_14)),challenge_17),@occ106_1) && b-inj-event(HopSignedTranscript(APP_L,R0,aenc(k_12,pk(relay_sk_15)),challenge_18),@occ495_1) && b-event(@p_act(@occ55_16,senc((tag_nonce[],n_8),k_13))) && b-event(@p_act(@occ123_16,senc((tag_nonce[],n_9),k_14))) && b-event(@p_act(@occ191_16,senc((tag_nonce[],n_10),k_15))) -> inj-event(HopPeerAuthenticated(R1,R2,aenc(k_out_6,pk(relay_sk_13)),challenge_16),@occ226_1)
+The 1st, 2nd, 3rd, 4th, 5th, 6th hypotheses occur strictly before the conclusion.
+Abbreviations:
+k_15 = k_3[srv_cert_2 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid]
+n_10 = n[reg_m = senc((tag_reg[],R2),k_15),ek = aenc(k_15,pk(ctrl_sk[])),!1 = @sid_1]
+relay_sk_13 = relay_sk_4[cfg_m_2 = senc((tag_cfg[],R1,APP_R),k_15),auth_m_2 = senc(tag_authed[],k_15),nonce_m_2 = senc((tag_nonce[],n_10),k_15),srv_cert_2 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid]
+k_14 = k_2[srv_cert_1 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid_2]
+n_9 = n[reg_m = senc((tag_reg[],R1),k_14),ek = aenc(k_14,pk(ctrl_sk[])),!1 = @sid_3]
+relay_sk_14 = relay_sk_2[cfg_m_1 = senc((tag_cfg[],R0,R2),k_14),auth_m_1 = senc(tag_authed[],k_14),nonce_m_1 = senc((tag_nonce[],n_9),k_14),srv_cert_1 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid_2]
+k_13 = k_1[srv_cert = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid_4]
+n_8 = n[reg_m = senc((tag_reg[],R0),k_13),ek = aenc(k_13,pk(ctrl_sk[])),!1 = @sid_5]
+relay_sk_15 = relay_sk[cfg_m = senc((tag_cfg[],APP_L,R1),k_13),auth_m = senc(tag_authed[],k_13),nonce_m = senc((tag_nonce[],n_8),k_13),srv_cert = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid_4]
+k_12 = k_8[relay_cert_8 = cert_make(R0,pkb(pk(relay_sk_15)),ca_sk[])]
+challenge_18 = challenge[ek_1 = aenc(k_12,pk(relay_sk_15)),peer_cert = cert_make(APP_L,pkb(pk(app_l_sk[])),ca_sk[]),!2 = @sid_6,cert_m = senc((tag_cert[],cert_make(R0,pkb(pk(relay_sk_15)),ca_sk[])),k_13),cfg_m = senc((tag_cfg[],APP_L,R1),k_13),auth_m = senc(tag_authed[],k_13),nonce_m = senc((tag_nonce[],n_8),k_13),srv_cert = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid_4]
+k_out_7 = k_out[fwd_cert = cert_make(R1,pkb(pk(relay_sk_14)),ca_sk[]),record = senc((tag_hop_data[],secret_msg[],APP_L,R0),k_12),proof_rx = sign((tag_hop_proof[],APP_L,R0,aenc(k_12,pk(relay_sk_15)),challenge_18),app_l_sk[]),ek_1 = aenc(k_12,pk(relay_sk_15)),peer_cert = cert_make(APP_L,pkb(pk(app_l_sk[])),ca_sk[]),!2 = @sid_6,cert_m = senc((tag_cert[],cert_make(R0,pkb(pk(relay_sk_15)),ca_sk[])),k_13),cfg_m = senc((tag_cfg[],APP_L,R1),k_13),auth_m = senc(tag_authed[],k_13),nonce_m = senc((tag_nonce[],n_8),k_13),srv_cert = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid_4]
+challenge_17 = challenge_2[ek_3 = aenc(k_out_7,pk(relay_sk_14)),peer_cert_1 = cert_make(R0,pkb(pk(relay_sk_15)),ca_sk[]),!2 = @sid_7,cert_m_1 = senc((tag_cert[],cert_make(R1,pkb(pk(relay_sk_14)),ca_sk[])),k_14),cfg_m_1 = senc((tag_cfg[],R0,R2),k_14),auth_m_1 = senc(tag_authed[],k_14),nonce_m_1 = senc((tag_nonce[],n_9),k_14),srv_cert_1 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid_2]
+k_out_6 = k_out_1[fwd_cert_1 = cert_make(R2,pkb(pk(relay_sk_13)),ca_sk[]),record_1 = senc((tag_hop_data[],qkd_enc(secret_msg[],qkd_k(R0,R1)),R0,R1),k_out_7),proof_rx_1 = sign((tag_hop_proof[],R0,R1,aenc(k_out_7,pk(relay_sk_14)),challenge_17),relay_sk_15),ek_3 = aenc(k_out_7,pk(relay_sk_14)),peer_cert_1 = cert_make(R0,pkb(pk(relay_sk_15)),ca_sk[]),!2 = @sid_7,cert_m_1 = senc((tag_cert[],cert_make(R1,pkb(pk(relay_sk_14)),ca_sk[])),k_14),cfg_m_1 = senc((tag_cfg[],R0,R2),k_14),auth_m_1 = senc(tag_authed[],k_14),nonce_m_1 = senc((tag_nonce[],n_9),k_14),srv_cert_1 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid_2]
+challenge_16 = challenge_4[ek_5 = aenc(k_out_6,pk(relay_sk_13)),peer_cert_2 = cert_make(R1,pkb(pk(relay_sk_14)),ca_sk[]),!2 = @sid_8,cert_m_2 = senc((tag_cert[],cert_make(R2,pkb(pk(relay_sk_13)),ca_sk[])),k_15),cfg_m_2 = senc((tag_cfg[],R1,APP_R),k_15),auth_m_2 = senc(tag_authed[],k_15),nonce_m_2 = senc((tag_nonce[],n_10),k_15),srv_cert_2 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid]
+@occ226_1 = @occ226[proof_rx_2 = sign((tag_hop_proof[],R1,R2,aenc(k_out_6,pk(relay_sk_13)),challenge_16),relay_sk_14),ek_5 = aenc(k_out_6,pk(relay_sk_13)),peer_cert_2 = cert_make(R1,pkb(pk(relay_sk_14)),ca_sk[]),!2 = @sid_8,cert_m_2 = senc((tag_cert[],cert_make(R2,pkb(pk(relay_sk_13)),ca_sk[])),k_15),cfg_m_2 = senc((tag_cfg[],R1,APP_R),k_15),auth_m_2 = senc(tag_authed[],k_15),nonce_m_2 = senc((tag_nonce[],n_10),k_15),srv_cert_2 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid]
+@occ174_1 = @occ174[challenge_m_1 = senc((tag_hop_challenge[],R1,R2,challenge_16),k_out_6),fwd_cert_1 = cert_make(R2,pkb(pk(relay_sk_13)),ca_sk[]),record_1 = senc((tag_hop_data[],qkd_enc(secret_msg[],qkd_k(R0,R1)),R0,R1),k_out_7),proof_rx_1 = sign((tag_hop_proof[],R0,R1,aenc(k_out_7,pk(relay_sk_14)),challenge_17),relay_sk_15),ek_3 = aenc(k_out_7,pk(relay_sk_14)),peer_cert_1 = cert_make(R0,pkb(pk(relay_sk_15)),ca_sk[]),!2 = @sid_7,cert_m_1 = senc((tag_cert[],cert_make(R1,pkb(pk(relay_sk_14)),ca_sk[])),k_14),cfg_m_1 = senc((tag_cfg[],R0,R2),k_14),auth_m_1 = senc(tag_authed[],k_14),nonce_m_1 = senc((tag_nonce[],n_9),k_14),srv_cert_1 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid_2]
+@occ106_1 = @occ106[challenge_m = senc((tag_hop_challenge[],R0,R1,challenge_17),k_out_7),fwd_cert = cert_make(R1,pkb(pk(relay_sk_14)),ca_sk[]),record = senc((tag_hop_data[],secret_msg[],APP_L,R0),k_12),proof_rx = sign((tag_hop_proof[],APP_L,R0,aenc(k_12,pk(relay_sk_15)),challenge_18),app_l_sk[]),ek_1 = aenc(k_12,pk(relay_sk_15)),peer_cert = cert_make(APP_L,pkb(pk(app_l_sk[])),ca_sk[]),!2 = @sid_6,cert_m = senc((tag_cert[],cert_make(R0,pkb(pk(relay_sk_15)),ca_sk[])),k_13),cfg_m = senc((tag_cfg[],APP_L,R1),k_13),auth_m = senc(tag_authed[],k_13),nonce_m = senc((tag_nonce[],n_8),k_13),srv_cert = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid_4]
+@occ495_1 = @occ495[challenge_m_6 = senc((tag_hop_challenge[],APP_L,R0,challenge_18),k_12),relay_cert_8 = cert_make(R0,pkb(pk(relay_sk_15)),ca_sk[])]
+@occ55_16 = @occ55_15[!1 = @sid_4]
+@occ123_16 = @occ123_15[!1 = @sid_2]
+@occ191_16 = @occ191_15[!1 = @sid]
+goal reachable: b-inj-event(HopSignedTranscript(R2,R1,aenc(k_out_6,pk(relay_sk_13)),challenge_16),@occ242_1) && b-inj-event(HopSignedTranscript(APP_R,R2,aenc(k_12,pk(relay_sk_14)),challenge_17),@occ514_1) && b-event(@p_act(@occ191_16,senc((tag_nonce[],n_8),k_13))) && b-event(@p_act(@occ123_16,senc((tag_nonce[],n_9),k_14))) -> inj-event(HopPeerAuthenticated(R2,R1,aenc(k_out_6,pk(relay_sk_13)),challenge_16),@occ158_1)
+The 1st, 2nd, 3rd, 4th hypotheses occur strictly before the conclusion.
+Abbreviations:
+k_14 = k_2[srv_cert_1 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid]
+n_9 = n[reg_m = senc((tag_reg[],R1),k_14),ek = aenc(k_14,pk(ctrl_sk[])),!1 = @sid_1]
+relay_sk_13 = relay_sk_2[cfg_m_1 = senc((tag_cfg[],R0,R2),k_14),auth_m_1 = senc(tag_authed[],k_14),nonce_m_1 = senc((tag_nonce[],n_9),k_14),srv_cert_1 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid]
+k_13 = k_3[srv_cert_2 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid_2]
+n_8 = n[reg_m = senc((tag_reg[],R2),k_13),ek = aenc(k_13,pk(ctrl_sk[])),!1 = @sid_3]
+relay_sk_14 = relay_sk_4[cfg_m_2 = senc((tag_cfg[],R1,APP_R),k_13),auth_m_2 = senc(tag_authed[],k_13),nonce_m_2 = senc((tag_nonce[],n_8),k_13),srv_cert_2 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid_2]
+k_12 = k_9[relay_cert_9 = cert_make(R2,pkb(pk(relay_sk_14)),ca_sk[])]
+challenge_17 = challenge_4[ek_5 = aenc(k_12,pk(relay_sk_14)),peer_cert_2 = cert_make(APP_R,pkb(pk(app_r_sk[])),ca_sk[]),!2 = @sid_4,cert_m_2 = senc((tag_cert[],cert_make(R2,pkb(pk(relay_sk_14)),ca_sk[])),k_13),cfg_m_2 = senc((tag_cfg[],R1,APP_R),k_13),auth_m_2 = senc(tag_authed[],k_13),nonce_m_2 = senc((tag_nonce[],n_8),k_13),srv_cert_2 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid_2]
+k_out_6 = k_out_2[fwd_cert_2 = cert_make(R1,pkb(pk(relay_sk_13)),ca_sk[]),record_2 = senc((tag_hop_data[],secret_msg_reverse[],APP_R,R2),k_12),proof_rx_2 = sign((tag_hop_proof[],APP_R,R2,aenc(k_12,pk(relay_sk_14)),challenge_17),app_r_sk[]),ek_5 = aenc(k_12,pk(relay_sk_14)),peer_cert_2 = cert_make(APP_R,pkb(pk(app_r_sk[])),ca_sk[]),!2 = @sid_4,cert_m_2 = senc((tag_cert[],cert_make(R2,pkb(pk(relay_sk_14)),ca_sk[])),k_13),cfg_m_2 = senc((tag_cfg[],R1,APP_R),k_13),auth_m_2 = senc(tag_authed[],k_13),nonce_m_2 = senc((tag_nonce[],n_8),k_13),srv_cert_2 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid_2]
+challenge_16 = challenge_2[ek_3 = aenc(k_out_6,pk(relay_sk_13)),peer_cert_1 = cert_make(R2,pkb(pk(relay_sk_14)),ca_sk[]),!2 = @sid_5,cert_m_1 = senc((tag_cert[],cert_make(R1,pkb(pk(relay_sk_13)),ca_sk[])),k_14),cfg_m_1 = senc((tag_cfg[],R0,R2),k_14),auth_m_1 = senc(tag_authed[],k_14),nonce_m_1 = senc((tag_nonce[],n_9),k_14),srv_cert_1 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid]
+@occ158_1 = @occ158[proof_rx_1 = sign((tag_hop_proof[],R2,R1,aenc(k_out_6,pk(relay_sk_13)),challenge_16),relay_sk_14),ek_3 = aenc(k_out_6,pk(relay_sk_13)),peer_cert_1 = cert_make(R2,pkb(pk(relay_sk_14)),ca_sk[]),!2 = @sid_5,cert_m_1 = senc((tag_cert[],cert_make(R1,pkb(pk(relay_sk_13)),ca_sk[])),k_14),cfg_m_1 = senc((tag_cfg[],R0,R2),k_14),auth_m_1 = senc(tag_authed[],k_14),nonce_m_1 = senc((tag_nonce[],n_9),k_14),srv_cert_1 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid]
+@occ242_1 = @occ242[challenge_m_2 = senc((tag_hop_challenge[],R2,R1,challenge_16),k_out_6),fwd_cert_2 = cert_make(R1,pkb(pk(relay_sk_13)),ca_sk[]),record_2 = senc((tag_hop_data[],secret_msg_reverse[],APP_R,R2),k_12),proof_rx_2 = sign((tag_hop_proof[],APP_R,R2,aenc(k_12,pk(relay_sk_14)),challenge_17),app_r_sk[]),ek_5 = aenc(k_12,pk(relay_sk_14)),peer_cert_2 = cert_make(APP_R,pkb(pk(app_r_sk[])),ca_sk[]),!2 = @sid_4,cert_m_2 = senc((tag_cert[],cert_make(R2,pkb(pk(relay_sk_14)),ca_sk[])),k_13),cfg_m_2 = senc((tag_cfg[],R1,APP_R),k_13),auth_m_2 = senc(tag_authed[],k_13),nonce_m_2 = senc((tag_nonce[],n_8),k_13),srv_cert_2 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid_2]
+@occ514_1 = @occ514[challenge_m_7 = senc((tag_hop_challenge[],APP_R,R2,challenge_17),k_12),relay_cert_9 = cert_make(R2,pkb(pk(relay_sk_14)),ca_sk[])]
+@occ191_16 = @occ191_15[!1 = @sid_2]
+@occ123_16 = @occ123_15[!1 = @sid]
+goal reachable: b-inj-event(HopSignedTranscript(R2,APP_R,aenc(k_out_6,pk(app_r_sk[])),challenge_16),@occ242_1) && b-inj-event(HopSignedTranscript(R1,R2,aenc(k_out_7,pk(relay_sk_13)),challenge_17),@occ174_1) && b-inj-event(HopSignedTranscript(R0,R1,aenc(k_out_8,pk(relay_sk_14)),challenge_18),@occ106_1) && b-inj-event(HopSignedTranscript(APP_L,R0,aenc(k_12,pk(relay_sk_15)),challenge_19),@occ495_1) && b-event(@p_act(@occ55_16,senc((tag_nonce[],n_8),k_13))) && b-event(@p_act(@occ123_16,senc((tag_nonce[],n_9),k_14))) && b-event(@p_act(@occ191_16,senc((tag_nonce[],n_10),k_15))) -> inj-event(HopPeerAuthenticated(R2,APP_R,aenc(k_out_6,pk(app_r_sk[])),challenge_16),@occ551_1)
+The 1st, 2nd, 3rd, 4th, 5th, 6th, 7th hypotheses occur strictly before the conclusion.
+Abbreviations:
+k_15 = k_3[srv_cert_2 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid]
+n_10 = n[reg_m = senc((tag_reg[],R2),k_15),ek = aenc(k_15,pk(ctrl_sk[])),!1 = @sid_1]
+relay_sk_13 = relay_sk_4[cfg_m_2 = senc((tag_cfg[],R1,APP_R),k_15),auth_m_2 = senc(tag_authed[],k_15),nonce_m_2 = senc((tag_nonce[],n_10),k_15),srv_cert_2 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid]
+k_14 = k_2[srv_cert_1 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid_2]
+n_9 = n[reg_m = senc((tag_reg[],R1),k_14),ek = aenc(k_14,pk(ctrl_sk[])),!1 = @sid_3]
+relay_sk_14 = relay_sk_2[cfg_m_1 = senc((tag_cfg[],R0,R2),k_14),auth_m_1 = senc(tag_authed[],k_14),nonce_m_1 = senc((tag_nonce[],n_9),k_14),srv_cert_1 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid_2]
+k_13 = k_1[srv_cert = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid_4]
+n_8 = n[reg_m = senc((tag_reg[],R0),k_13),ek = aenc(k_13,pk(ctrl_sk[])),!1 = @sid_5]
+relay_sk_15 = relay_sk[cfg_m = senc((tag_cfg[],APP_L,R1),k_13),auth_m = senc(tag_authed[],k_13),nonce_m = senc((tag_nonce[],n_8),k_13),srv_cert = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid_4]
+k_12 = k_8[relay_cert_8 = cert_make(R0,pkb(pk(relay_sk_15)),ca_sk[])]
+challenge_19 = challenge[ek_1 = aenc(k_12,pk(relay_sk_15)),peer_cert = cert_make(APP_L,pkb(pk(app_l_sk[])),ca_sk[]),!2 = @sid_6,cert_m = senc((tag_cert[],cert_make(R0,pkb(pk(relay_sk_15)),ca_sk[])),k_13),cfg_m = senc((tag_cfg[],APP_L,R1),k_13),auth_m = senc(tag_authed[],k_13),nonce_m = senc((tag_nonce[],n_8),k_13),srv_cert = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid_4]
+k_out_8 = k_out[fwd_cert = cert_make(R1,pkb(pk(relay_sk_14)),ca_sk[]),record = senc((tag_hop_data[],secret_msg[],APP_L,R0),k_12),proof_rx = sign((tag_hop_proof[],APP_L,R0,aenc(k_12,pk(relay_sk_15)),challenge_19),app_l_sk[]),ek_1 = aenc(k_12,pk(relay_sk_15)),peer_cert = cert_make(APP_L,pkb(pk(app_l_sk[])),ca_sk[]),!2 = @sid_6,cert_m = senc((tag_cert[],cert_make(R0,pkb(pk(relay_sk_15)),ca_sk[])),k_13),cfg_m = senc((tag_cfg[],APP_L,R1),k_13),auth_m = senc(tag_authed[],k_13),nonce_m = senc((tag_nonce[],n_8),k_13),srv_cert = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid_4]
+challenge_18 = challenge_2[ek_3 = aenc(k_out_8,pk(relay_sk_14)),peer_cert_1 = cert_make(R0,pkb(pk(relay_sk_15)),ca_sk[]),!2 = @sid_7,cert_m_1 = senc((tag_cert[],cert_make(R1,pkb(pk(relay_sk_14)),ca_sk[])),k_14),cfg_m_1 = senc((tag_cfg[],R0,R2),k_14),auth_m_1 = senc(tag_authed[],k_14),nonce_m_1 = senc((tag_nonce[],n_9),k_14),srv_cert_1 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid_2]
+k_out_7 = k_out_1[fwd_cert_1 = cert_make(R2,pkb(pk(relay_sk_13)),ca_sk[]),record_1 = senc((tag_hop_data[],qkd_enc(secret_msg[],qkd_k(R0,R1)),R0,R1),k_out_8),proof_rx_1 = sign((tag_hop_proof[],R0,R1,aenc(k_out_8,pk(relay_sk_14)),challenge_18),relay_sk_15),ek_3 = aenc(k_out_8,pk(relay_sk_14)),peer_cert_1 = cert_make(R0,pkb(pk(relay_sk_15)),ca_sk[]),!2 = @sid_7,cert_m_1 = senc((tag_cert[],cert_make(R1,pkb(pk(relay_sk_14)),ca_sk[])),k_14),cfg_m_1 = senc((tag_cfg[],R0,R2),k_14),auth_m_1 = senc(tag_authed[],k_14),nonce_m_1 = senc((tag_nonce[],n_9),k_14),srv_cert_1 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid_2]
+challenge_17 = challenge_4[ek_5 = aenc(k_out_7,pk(relay_sk_13)),peer_cert_2 = cert_make(R1,pkb(pk(relay_sk_14)),ca_sk[]),!2 = @sid_8,cert_m_2 = senc((tag_cert[],cert_make(R2,pkb(pk(relay_sk_13)),ca_sk[])),k_15),cfg_m_2 = senc((tag_cfg[],R1,APP_R),k_15),auth_m_2 = senc(tag_authed[],k_15),nonce_m_2 = senc((tag_nonce[],n_10),k_15),srv_cert_2 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid]
+k_out_6 = k_out_2[fwd_cert_2 = cert_make(APP_R,pkb(pk(app_r_sk[])),ca_sk[]),record_2 = senc((tag_hop_data[],qkd_enc(secret_msg[],qkd_k(R1,R2)),R1,R2),k_out_7),proof_rx_2 = sign((tag_hop_proof[],R1,R2,aenc(k_out_7,pk(relay_sk_13)),challenge_17),relay_sk_14),ek_5 = aenc(k_out_7,pk(relay_sk_13)),peer_cert_2 = cert_make(R1,pkb(pk(relay_sk_14)),ca_sk[]),!2 = @sid_8,cert_m_2 = senc((tag_cert[],cert_make(R2,pkb(pk(relay_sk_13)),ca_sk[])),k_15),cfg_m_2 = senc((tag_cfg[],R1,APP_R),k_15),auth_m_2 = senc(tag_authed[],k_15),nonce_m_2 = senc((tag_nonce[],n_10),k_15),srv_cert_2 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid]
+challenge_16 = challenge_15[ek_16 = aenc(k_out_6,pk(app_r_sk[])),peer_cert_7 = cert_make(R2,pkb(pk(relay_sk_13)),ca_sk[]),!1 = @sid_9]
+@occ551_1 = @occ551[proof_rx_7 = sign((tag_hop_proof[],R2,APP_R,aenc(k_out_6,pk(app_r_sk[])),challenge_16),relay_sk_13),ek_16 = aenc(k_out_6,pk(app_r_sk[])),peer_cert_7 = cert_make(R2,pkb(pk(relay_sk_13)),ca_sk[]),!1 = @sid_9]
+@occ242_1 = @occ242[challenge_m_2 = senc((tag_hop_challenge[],R2,APP_R,challenge_16),k_out_6),fwd_cert_2 = cert_make(APP_R,pkb(pk(app_r_sk[])),ca_sk[]),record_2 = senc((tag_hop_data[],qkd_enc(secret_msg[],qkd_k(R1,R2)),R1,R2),k_out_7),proof_rx_2 = sign((tag_hop_proof[],R1,R2,aenc(k_out_7,pk(relay_sk_13)),challenge_17),relay_sk_14),ek_5 = aenc(k_out_7,pk(relay_sk_13)),peer_cert_2 = cert_make(R1,pkb(pk(relay_sk_14)),ca_sk[]),!2 = @sid_8,cert_m_2 = senc((tag_cert[],cert_make(R2,pkb(pk(relay_sk_13)),ca_sk[])),k_15),cfg_m_2 = senc((tag_cfg[],R1,APP_R),k_15),auth_m_2 = senc(tag_authed[],k_15),nonce_m_2 = senc((tag_nonce[],n_10),k_15),srv_cert_2 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid]
+@occ174_1 = @occ174[challenge_m_1 = senc((tag_hop_challenge[],R1,R2,challenge_17),k_out_7),fwd_cert_1 = cert_make(R2,pkb(pk(relay_sk_13)),ca_sk[]),record_1 = senc((tag_hop_data[],qkd_enc(secret_msg[],qkd_k(R0,R1)),R0,R1),k_out_8),proof_rx_1 = sign((tag_hop_proof[],R0,R1,aenc(k_out_8,pk(relay_sk_14)),challenge_18),relay_sk_15),ek_3 = aenc(k_out_8,pk(relay_sk_14)),peer_cert_1 = cert_make(R0,pkb(pk(relay_sk_15)),ca_sk[]),!2 = @sid_7,cert_m_1 = senc((tag_cert[],cert_make(R1,pkb(pk(relay_sk_14)),ca_sk[])),k_14),cfg_m_1 = senc((tag_cfg[],R0,R2),k_14),auth_m_1 = senc(tag_authed[],k_14),nonce_m_1 = senc((tag_nonce[],n_9),k_14),srv_cert_1 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid_2]
+@occ106_1 = @occ106[challenge_m = senc((tag_hop_challenge[],R0,R1,challenge_18),k_out_8),fwd_cert = cert_make(R1,pkb(pk(relay_sk_14)),ca_sk[]),record = senc((tag_hop_data[],secret_msg[],APP_L,R0),k_12),proof_rx = sign((tag_hop_proof[],APP_L,R0,aenc(k_12,pk(relay_sk_15)),challenge_19),app_l_sk[]),ek_1 = aenc(k_12,pk(relay_sk_15)),peer_cert = cert_make(APP_L,pkb(pk(app_l_sk[])),ca_sk[]),!2 = @sid_6,cert_m = senc((tag_cert[],cert_make(R0,pkb(pk(relay_sk_15)),ca_sk[])),k_13),cfg_m = senc((tag_cfg[],APP_L,R1),k_13),auth_m = senc(tag_authed[],k_13),nonce_m = senc((tag_nonce[],n_8),k_13),srv_cert = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid_4]
+@occ495_1 = @occ495[challenge_m_6 = senc((tag_hop_challenge[],APP_L,R0,challenge_19),k_12),relay_cert_8 = cert_make(R0,pkb(pk(relay_sk_15)),ca_sk[])]
+@occ55_16 = @occ55_15[!1 = @sid_4]
+@occ123_16 = @occ123_15[!1 = @sid_2]
+@occ191_16 = @occ191_15[!1 = @sid]
+goal reachable: b-inj-event(HopSignedTranscript(APP_L,R0,aenc(k_12,pk(relay_sk_13)),challenge_16),@occ495_1) && b-event(@p_act(@occ55_16,senc((tag_nonce[],n_8),k_13))) -> inj-event(HopPeerAuthenticated(APP_L,R0,aenc(k_12,pk(relay_sk_13)),challenge_16),@occ90_1)
+The 1st, 2nd hypotheses occur strictly before the conclusion.
+Abbreviations:
+k_13 = k_1[srv_cert = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid]
+n_8 = n[reg_m = senc((tag_reg[],R0),k_13),ek = aenc(k_13,pk(ctrl_sk[])),!1 = @sid_1]
+relay_sk_13 = relay_sk[cfg_m = senc((tag_cfg[],APP_L,R1),k_13),auth_m = senc(tag_authed[],k_13),nonce_m = senc((tag_nonce[],n_8),k_13),srv_cert = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid]
+k_12 = k_8[relay_cert_8 = cert_make(R0,pkb(pk(relay_sk_13)),ca_sk[])]
+challenge_16 = challenge[ek_1 = aenc(k_12,pk(relay_sk_13)),peer_cert = cert_make(APP_L,pkb(pk(app_l_sk[])),ca_sk[]),!2 = @sid_2,cert_m = senc((tag_cert[],cert_make(R0,pkb(pk(relay_sk_13)),ca_sk[])),k_13),cfg_m = senc((tag_cfg[],APP_L,R1),k_13),auth_m = senc(tag_authed[],k_13),nonce_m = senc((tag_nonce[],n_8),k_13),srv_cert = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid]
+@occ90_1 = @occ90[proof_rx = sign((tag_hop_proof[],APP_L,R0,aenc(k_12,pk(relay_sk_13)),challenge_16),app_l_sk[]),ek_1 = aenc(k_12,pk(relay_sk_13)),peer_cert = cert_make(APP_L,pkb(pk(app_l_sk[])),ca_sk[]),!2 = @sid_2,cert_m = senc((tag_cert[],cert_make(R0,pkb(pk(relay_sk_13)),ca_sk[])),k_13),cfg_m = senc((tag_cfg[],APP_L,R1),k_13),auth_m = senc(tag_authed[],k_13),nonce_m = senc((tag_nonce[],n_8),k_13),srv_cert = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid]
+@occ495_1 = @occ495[challenge_m_6 = senc((tag_hop_challenge[],APP_L,R0,challenge_16),k_12),relay_cert_8 = cert_make(R0,pkb(pk(relay_sk_13)),ca_sk[])]
+@occ55_16 = @occ55_15[!1 = @sid]
+goal reachable: b-inj-event(HopSignedTranscript(APP_R,R2,aenc(k_12,pk(relay_sk_13)),challenge_16),@occ514_1) && b-event(@p_act(@occ191_16,senc((tag_nonce[],n_8),k_13))) -> inj-event(HopPeerAuthenticated(APP_R,R2,aenc(k_12,pk(relay_sk_13)),challenge_16),@occ226_1)
+The 1st, 2nd hypotheses occur strictly before the conclusion.
+Abbreviations:
+k_13 = k_3[srv_cert_2 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid]
+n_8 = n[reg_m = senc((tag_reg[],R2),k_13),ek = aenc(k_13,pk(ctrl_sk[])),!1 = @sid_1]
+relay_sk_13 = relay_sk_4[cfg_m_2 = senc((tag_cfg[],R1,APP_R),k_13),auth_m_2 = senc(tag_authed[],k_13),nonce_m_2 = senc((tag_nonce[],n_8),k_13),srv_cert_2 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid]
+k_12 = k_9[relay_cert_9 = cert_make(R2,pkb(pk(relay_sk_13)),ca_sk[])]
+challenge_16 = challenge_4[ek_5 = aenc(k_12,pk(relay_sk_13)),peer_cert_2 = cert_make(APP_R,pkb(pk(app_r_sk[])),ca_sk[]),!2 = @sid_2,cert_m_2 = senc((tag_cert[],cert_make(R2,pkb(pk(relay_sk_13)),ca_sk[])),k_13),cfg_m_2 = senc((tag_cfg[],R1,APP_R),k_13),auth_m_2 = senc(tag_authed[],k_13),nonce_m_2 = senc((tag_nonce[],n_8),k_13),srv_cert_2 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid]
+@occ226_1 = @occ226[proof_rx_2 = sign((tag_hop_proof[],APP_R,R2,aenc(k_12,pk(relay_sk_13)),challenge_16),app_r_sk[]),ek_5 = aenc(k_12,pk(relay_sk_13)),peer_cert_2 = cert_make(APP_R,pkb(pk(app_r_sk[])),ca_sk[]),!2 = @sid_2,cert_m_2 = senc((tag_cert[],cert_make(R2,pkb(pk(relay_sk_13)),ca_sk[])),k_13),cfg_m_2 = senc((tag_cfg[],R1,APP_R),k_13),auth_m_2 = senc(tag_authed[],k_13),nonce_m_2 = senc((tag_nonce[],n_8),k_13),srv_cert_2 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid]
+@occ514_1 = @occ514[challenge_m_7 = senc((tag_hop_challenge[],APP_R,R2,challenge_16),k_12),relay_cert_9 = cert_make(R2,pkb(pk(relay_sk_13)),ca_sk[])]
+@occ191_16 = @occ191_15[!1 = @sid]
+RESULT inj-event(HopPeerAuthenticated(f,t,ek_17,n_8)) ==> inj-event(HopSignedTranscript(f,t,ek_17,n_8)) is true.
+-- Query event(AppDelivered(m,f,t)) ==> event(HopSent(m,f,t)) in process 1.
+Translating the process into Horn clauses...
+Completing...
+200 rules inserted. Base: 200 rules (50 with conclusion selected). Queue: 248 rules.
+400 rules inserted. Base: 398 rules (57 with conclusion selected). Queue: 188 rules.
+600 rules inserted. Base: 582 rules (67 with conclusion selected). Queue: 35 rules.
+800 rules inserted. Base: 712 rules (83 with conclusion selected). Queue: 37 rules.
+1000 rules inserted. Base: 799 rules (108 with conclusion selected). Queue: 32 rules.
+1200 rules inserted. Base: 963 rules (131 with conclusion selected). Queue: 10 rules.
+1400 rules inserted. Base: 1032 rules (146 with conclusion selected). Queue: 7 rules.
+Starting query event(AppDelivered(m,f,t)) ==> event(HopSent(m,f,t))
+goal reachable: b-event(HopSent(secret_msg_reverse[],R0,APP_L)) && b-event(HopSent(secret_msg_reverse[],R1,R0)) && b-event(HopSent(secret_msg_reverse[],R2,R1)) && b-event(HopSent(secret_msg_reverse[],APP_R,R2)) && b-event(@p_act(@occ191_17,senc((tag_nonce[],n_8),k_12))) && b-event(@p_act(@occ123_17,senc((tag_nonce[],n_9),k_13))) && b-event(@p_act(@occ55_17,senc((tag_nonce[],n_10),k_14))) -> event(AppDelivered(secret_msg_reverse[],R0,APP_L))
+Abbreviations:
+@occ191_17 = @occ191_16[!1 = @sid]
+k_12 = k_3[srv_cert_2 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid]
+n_8 = n[reg_m = senc((tag_reg[],R2),k_12),ek = aenc(k_12,pk(ctrl_sk[])),!1 = @sid_1]
+@occ123_17 = @occ123_16[!1 = @sid_2]
+k_13 = k_2[srv_cert_1 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid_2]
+n_9 = n[reg_m = senc((tag_reg[],R1),k_13),ek = aenc(k_13,pk(ctrl_sk[])),!1 = @sid_3]
+@occ55_17 = @occ55_16[!1 = @sid_4]
+k_14 = k_1[srv_cert = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid_4]
+n_10 = n[reg_m = senc((tag_reg[],R0),k_14),ek = aenc(k_14,pk(ctrl_sk[])),!1 = @sid_5]
+goal reachable: b-event(HopSent(secret_msg[],R2,APP_R)) && b-event(HopSent(secret_msg[],R1,R2)) && b-event(HopSent(secret_msg[],R0,R1)) && b-event(HopSent(secret_msg[],APP_L,R0)) && b-event(@p_act(@occ55_17,senc((tag_nonce[],n_8),k_12))) && b-event(@p_act(@occ123_17,senc((tag_nonce[],n_9),k_13))) && b-event(@p_act(@occ191_17,senc((tag_nonce[],n_10),k_14))) -> event(AppDelivered(secret_msg[],R2,APP_R))
+Abbreviations:
+@occ55_17 = @occ55_16[!1 = @sid]
+k_12 = k_1[srv_cert = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid]
+n_8 = n[reg_m = senc((tag_reg[],R0),k_12),ek = aenc(k_12,pk(ctrl_sk[])),!1 = @sid_1]
+@occ123_17 = @occ123_16[!1 = @sid_2]
+k_13 = k_2[srv_cert_1 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid_2]
+n_9 = n[reg_m = senc((tag_reg[],R1),k_13),ek = aenc(k_13,pk(ctrl_sk[])),!1 = @sid_3]
+@occ191_17 = @occ191_16[!1 = @sid_4]
+k_14 = k_3[srv_cert_2 = cert_make(ctrl_id,pkb(pk(ctrl_sk[])),ca_sk[]),!1 = @sid_4]
+n_10 = n[reg_m = senc((tag_reg[],R2),k_14),ek = aenc(k_14,pk(ctrl_sk[])),!1 = @sid_5]
+RESULT event(AppDelivered(m,f,t)) ==> event(HopSent(m,f,t)) is true.
+
+--------------------------------------------------------------
+Verification summary:
+
+Query not attacker(secret_msg[]) is true.
+
+Query not attacker(secret_msg_reverse[]) is true.
+
+Query not attacker(qkd_k(R0,R1)) is true.
+
+Query not attacker(qkd_k(R1,R2)) is true.
+
+Query not attacker(qkd_k(R1,R0)) is true.
+
+Query not attacker(qkd_k(R2,R1)) is true.
+
+Query event(CtrlIssuedCert(rid_8,n_8,m,pb)) ==> event(CtrlGotAttest(rid_8,n_8,m)) is true.
+
+Query event(CtrlGotAttest(rid_8,n_8,m)) ==> event(CtrlGotRegister(rid_8)) is true.
+
+Query inj-event(CtrlIssuedCert(rid_8,n_8,m,pb)) ==> inj-event(CtrlGotAttest(rid_8,n_8,m)) is true.
+
+Query inj-event(CtrlGotAttest(rid_8,n_8,m)) ==> inj-event(RelaySignedReport(rid_8,n_8,m)) is true.
+
+Query event(RelayGotHop(m,f,t)) ==> event(HopSent(m,f,t)) is true.
+
+Query event(RelayGotHop(x,f,t)) ==> event(RelayLoadedCfg(t,n_8,f,r)) || event(RelayLoadedCfg(t,n_8,l,f)) is true.
+
+Query event(RelaySentHop(x,f,t)) ==> event(RelayLoadedCfg(f,n_8,l,t)) || event(RelayLoadedCfg(f,n_8,t,r)) is true.
+
+Query event(RelayLoadedCfg(rid_8,n_8,l,r)) ==> event(CtrlSentCfg(rid_8,n_8,l,r)) is true.
+
+Query event(RelayGotCert(rid_8,n_8,m,pb)) ==> event(CtrlIssuedCert(rid_8,n_8,m,pb)) is true.
+
+Query inj-event(HopPeerAuthenticated(f,t,ek_17,n_8)) ==> inj-event(HopSignedTranscript(f,t,ek_17,n_8)) is true.
+
+Query event(AppDelivered(m,f,t)) ==> event(HopSent(m,f,t)) is true.
+
+--------------------------------------------------------------
+

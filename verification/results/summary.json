@@ -1,11 +1,11 @@
 {
   "tool": "Proverif 2.05. Cryptographic protocol verifier, by Bruno Blanchet, Vincent Cheval, and Marc Sylvestre",
   "model": "protocol.pv",
-  "model_sha256": "ff6debd1bdcf645987be34d496911e5eb6fba8fe99ec05ed69901db6d1b131f0",
+  "model_sha256": "6f530d2d69fd47fbacf37b2e63a57dc9e06f1b56fa17dbd61cf7917e7d2f1ce9",
   "command_options": {
     "group": "all",
     "cases": null,
-    "timeout_seconds": 120
+    "timeout_seconds": 600
   },
   "runs": [
     {
@@ -13,8 +13,9 @@
       "passed": true,
       "timeout": false,
       "exit_code": 0,
-      "seconds": 18.526,
+      "seconds": 19.843,
       "expected_unreachable": null,
+      "expected_results": null,
       "results": [
         {
           "query": "not attacker(secret_msg[])",
@@ -86,7 +87,7 @@
         }
       ],
       "input": "security.pv",
-      "input_sha256": "ff6debd1bdcf645987be34d496911e5eb6fba8fe99ec05ed69901db6d1b131f0",
+      "input_sha256": "6f530d2d69fd47fbacf37b2e63a57dc9e06f1b56fa17dbd61cf7917e7d2f1ce9",
       "log": "security.log"
     },
     {
@@ -94,8 +95,9 @@
       "passed": true,
       "timeout": false,
       "exit_code": 0,
-      "seconds": 0.918,
+      "seconds": 0.969,
       "expected_unreachable": false,
+      "expected_results": null,
       "results": [
         {
           "query": "not event(CtrlIssuedCert(R0,n_7,m,pb))",
@@ -103,7 +105,7 @@
         }
       ],
       "input": "issue_r0.pv",
-      "input_sha256": "d33662831a0a46c59920da9373b887425397ba149b45d270d11cbf4a97037fef",
+      "input_sha256": "2116af65961cd93c3d24991f5ead07eeb3c627ff43f74a14ce930994c2ab45e8",
       "log": "issue_r0.log"
     },
     {
@@ -111,8 +113,9 @@
       "passed": true,
       "timeout": false,
       "exit_code": 0,
-      "seconds": 0.968,
+      "seconds": 1.018,
       "expected_unreachable": false,
+      "expected_results": null,
       "results": [
         {
           "query": "not event(CtrlIssuedCert(R1,n_7,m,pb))",
@@ -120,7 +123,7 @@
         }
       ],
       "input": "issue_r1.pv",
-      "input_sha256": "c4f18fe99c4161b934ba3ac63eda39def09b8077db49b697b1b4b7eee8ab547b",
+      "input_sha256": "6c7704f07ce42f6f44761a40dd0d3ea89cb18efbb0f41a1ec6f448dcc26fdb94",
       "log": "issue_r1.log"
     },
     {
@@ -128,8 +131,9 @@
       "passed": true,
       "timeout": false,
       "exit_code": 0,
-      "seconds": 0.918,
+      "seconds": 1.068,
       "expected_unreachable": false,
+      "expected_results": null,
       "results": [
         {
           "query": "not event(CtrlIssuedCert(R2,n_7,m,pb))",
@@ -137,7 +141,7 @@
         }
       ],
       "input": "issue_r2.pv",
-      "input_sha256": "3281aec7b22fe3af91818aec3e5b22f19b5c189d425793a7a5428121523da989",
+      "input_sha256": "cf8422143448c5285ee0cb56273b6e19e5d01174aa6f5c1ec57e61b545113efa",
       "log": "issue_r2.log"
     },
     {
@@ -145,8 +149,9 @@
       "passed": true,
       "timeout": false,
       "exit_code": 0,
-      "seconds": 0.968,
+      "seconds": 1.068,
       "expected_unreachable": false,
+      "expected_results": null,
       "results": [
         {
           "query": "not event(RelayGotCert(R0,n_7,m,pb))",
@@ -154,7 +159,7 @@
         }
       ],
       "input": "cert_r0.pv",
-      "input_sha256": "2222be5f6b5ce3396395fdf26de17ac1a464be431d7fcc882ed534174048e013",
+      "input_sha256": "ebb472849a3cc7ee0d9dcb00eefa2d43b4871a35675090f72ac201ed15ad01d0",
       "log": "cert_r0.log"
     },
     {
@@ -164,6 +169,7 @@
       "exit_code": 0,
       "seconds": 0.969,
       "expected_unreachable": false,
+      "expected_results": null,
       "results": [
         {
           "query": "not event(RelayGotCert(R1,n_7,m,pb))",
@@ -171,7 +177,7 @@
         }
       ],
       "input": "cert_r1.pv",
-      "input_sha256": "705dcefc73b865c58e145b77a12f1b0f504ab4ffa5ad80471475ce2382eac929",
+      "input_sha256": "c9e95aaf26d4d5f739f668e22d65da5799ea418430ce04c8655889d0365bfafb",
       "log": "cert_r1.log"
     },
     {
@@ -179,8 +185,9 @@
       "passed": true,
       "timeout": false,
       "exit_code": 0,
-      "seconds": 0.918,
+      "seconds": 1.019,
       "expected_unreachable": false,
+      "expected_results": null,
       "results": [
         {
           "query": "not event(RelayGotCert(R2,n_7,m,pb))",
@@ -188,7 +195,7 @@
         }
       ],
       "input": "cert_r2.pv",
-      "input_sha256": "f4fe379eeb4e247158abf6bc48de2f449252ae6094ca9e2299f50c07b7c07fc2",
+      "input_sha256": "515d22419e44ea996a9be7be9a4d1382f30968e06597d544a5db704057ab31db",
       "log": "cert_r2.log"
     },
     {
@@ -196,8 +203,9 @@
       "passed": true,
       "timeout": false,
       "exit_code": 0,
-      "seconds": 0.969,
+      "seconds": 1.018,
       "expected_unreachable": false,
+      "expected_results": null,
       "results": [
         {
           "query": "not event(AppSubmitted(secret_msg[],APP_L,R0))",
@@ -205,7 +213,7 @@
         }
       ],
       "input": "submit_forward.pv",
-      "input_sha256": "29f0041c9420defc40d4af6674ac372a8c70078ba34ebaa345a9b552c0842caf",
+      "input_sha256": "8b0b6a6c134146257f47f4776ea226b85931fe82fcb1817a013f96cfbdc2c782",
       "log": "submit_forward.log"
     },
     {
@@ -213,8 +221,9 @@
       "passed": true,
       "timeout": false,
       "exit_code": 0,
-      "seconds": 1.02,
+      "seconds": 0.968,
       "expected_unreachable": false,
+      "expected_results": null,
       "results": [
         {
           "query": "not event(AppSubmitted(secret_msg_reverse[],APP_R,R2))",
@@ -222,7 +231,7 @@
         }
       ],
       "input": "submit_reverse.pv",
-      "input_sha256": "2e9869f1bc0d6fc61c0f1adf46048a7a742f4bb2ddf35c87b86b62f57bc2e62d",
+      "input_sha256": "d527b2623d12bdc56cb1efb214985658b82e0d85dc854322a1c1844586a5e78c",
       "log": "submit_reverse.log"
     },
     {
@@ -230,8 +239,9 @@
       "passed": true,
       "timeout": false,
       "exit_code": 0,
-      "seconds": 1.02,
+      "seconds": 0.968,
       "expected_unreachable": false,
+      "expected_results": null,
       "results": [
         {
           "query": "not event(RelayGotHop(secret_msg[],APP_L,R0))",
@@ -239,7 +249,7 @@
         }
       ],
       "input": "receive_forward_0.pv",
-      "input_sha256": "61546b76bd6547bfd15baf3258437de76fd88efc38c5e8656f031ceee6a66e34",
+      "input_sha256": "4e1331cdc64393246e4445d05b9a636d665f78733a5b15f965c4e31957358ed8",
       "log": "receive_forward_0.log"
     },
     {
@@ -247,8 +257,9 @@
       "passed": true,
       "timeout": false,
       "exit_code": 0,
-      "seconds": 1.021,
+      "seconds": 1.068,
       "expected_unreachable": false,
+      "expected_results": null,
       "results": [
         {
           "query": "not event(RelayGotHop(secret_msg[],R0,R1))",
@@ -256,7 +267,7 @@
         }
       ],
       "input": "receive_forward_1.pv",
-      "input_sha256": "97b9c536df0c58edba1071935a63abc742ad9ad75463b4ef713ae0035134c16e",
+      "input_sha256": "2ea8e06f13b96c39297ea6335c3d4ebeab035c8e5e73eeb1588d3ebc2da570b7",
       "log": "receive_forward_1.log"
     },
     {
@@ -264,8 +275,9 @@
       "passed": true,
       "timeout": false,
       "exit_code": 0,
-      "seconds": 1.17,
+      "seconds": 1.218,
       "expected_unreachable": false,
+      "expected_results": null,
       "results": [
         {
           "query": "not event(RelayGotHop(secret_msg[],R1,R2))",
@@ -273,7 +285,7 @@
         }
       ],
       "input": "receive_forward_2.pv",
-      "input_sha256": "fb891f7db017d3019ade986a0ae1f91dfa6ed3cae59eaa0f50b110b5e86e5832",
+      "input_sha256": "141ab02f3fac3bec62cf412c74bc7481b1c25425604b58572d227fc084883b91",
       "log": "receive_forward_2.log"
     },
     {
@@ -281,8 +293,9 @@
       "passed": true,
       "timeout": false,
       "exit_code": 0,
-      "seconds": 0.919,
+      "seconds": 1.018,
       "expected_unreachable": false,
+      "expected_results": null,
       "results": [
         {
           "query": "not event(RelayGotHop(secret_msg_reverse[],APP_R,R2))",
@@ -290,7 +303,7 @@
         }
       ],
       "input": "receive_reverse_2.pv",
-      "input_sha256": "35ab888c5c7387bf99db59ca1a29ca6f529ab3903c26ba540febd1152388b4b8",
+      "input_sha256": "fde3329d15dfed458ad63801abc8729a497319fc3e45522e9b3768039b8dcc1e",
       "log": "receive_reverse_2.log"
     },
     {
@@ -298,8 +311,9 @@
       "passed": true,
       "timeout": false,
       "exit_code": 0,
-      "seconds": 0.968,
+      "seconds": 1.018,
       "expected_unreachable": false,
+      "expected_results": null,
       "results": [
         {
           "query": "not event(RelayGotHop(secret_msg_reverse[],R2,R1))",
@@ -307,7 +321,7 @@
         }
       ],
       "input": "receive_reverse_1.pv",
-      "input_sha256": "46335b70692b380926209ddd602379be9768f42008d75c4f3206c5bfbc3b157c",
+      "input_sha256": "cdd8787b53b04e8328c850a0a16c6148c3d97276fc132190f3949712ad5fca33",
       "log": "receive_reverse_1.log"
     },
     {
@@ -315,8 +329,9 @@
       "passed": true,
       "timeout": false,
       "exit_code": 0,
-      "seconds": 1.118,
+      "seconds": 1.169,
       "expected_unreachable": false,
+      "expected_results": null,
       "results": [
         {
           "query": "not event(RelayGotHop(secret_msg_reverse[],R1,R0))",
@@ -324,7 +339,7 @@
         }
       ],
       "input": "receive_reverse_0.pv",
-      "input_sha256": "fc0cc0c232c3668c99fe466df99446d1945e43134d65489a72a5d006d5d9e479",
+      "input_sha256": "21db775747371199dc4d5e1c95ab811e5d3fb0d710ab49cbde6e6f9cfc9ebbee",
       "log": "receive_reverse_0.log"
     },
     {
@@ -332,8 +347,9 @@
       "passed": true,
       "timeout": false,
       "exit_code": 0,
-      "seconds": 1.97,
+      "seconds": 2.173,
       "expected_unreachable": false,
+      "expected_results": null,
       "results": [
         {
           "query": "not event(AppDelivered(secret_msg[],R2,APP_R))",
@@ -341,7 +357,7 @@
         }
       ],
       "input": "deliver_forward.pv",
-      "input_sha256": "f9707089dbf9f8e019886984d9fad7eceb94120b9b4147c84c4f7d960bfb9881",
+      "input_sha256": "b912a6b9993f8177ab2e1cc316184947c47a9c98cca93102029324e6c2c62982",
       "log": "deliver_forward.log"
     },
     {
@@ -349,8 +365,9 @@
       "passed": true,
       "timeout": false,
       "exit_code": 0,
-      "seconds": 2.022,
+      "seconds": 2.223,
       "expected_unreachable": false,
+      "expected_results": null,
       "results": [
         {
           "query": "not event(AppDelivered(secret_msg_reverse[],R0,APP_L))",
@@ -358,7 +375,7 @@
         }
       ],
       "input": "deliver_reverse.pv",
-      "input_sha256": "826e1733d36e0ab02c570d09837595aae43d904475b2fb8cc73e3351a6023b9d",
+      "input_sha256": "30e400b86c7b7965132b00f4813f0da0f6c1d99e87ccda2203f447a0db679cac",
       "log": "deliver_reverse.log"
     },
     {
@@ -366,8 +383,9 @@
       "passed": true,
       "timeout": false,
       "exit_code": 0,
-      "seconds": 0.918,
+      "seconds": 1.069,
       "expected_unreachable": false,
+      "expected_results": null,
       "results": [
         {
           "query": "not event(RelaySignedReport(R1,n_7,bad_meas(R1)))",
@@ -375,7 +393,7 @@
         }
       ],
       "input": "bad_image_signs.pv",
-      "input_sha256": "ee53f4daaa3a134c0168c5bb99bff16811156d5b06f1a48451c5fe5df178f6a8",
+      "input_sha256": "b45d56f5434323915f0c98ca0f1e4a16bf4d6425572bbd8de2d9145d2ad32cab",
       "log": "bad_image_signs.log"
     },
     {
@@ -383,8 +401,9 @@
       "passed": true,
       "timeout": false,
       "exit_code": 0,
-      "seconds": 0.919,
+      "seconds": 1.069,
       "expected_unreachable": true,
+      "expected_results": null,
       "results": [
         {
           "query": "not event(CtrlGotAttest(rid_7,n_7,bad_meas(rid_7)))",
@@ -392,7 +411,7 @@
         }
       ],
       "input": "bad_image_rejected.pv",
-      "input_sha256": "b15d6f59e78db1966540d531ef45036050fcb5fd96b51527de80ae6cd884cd49",
+      "input_sha256": "f6d2dc253cc5ab8c69901d3eaee31d25c1b9c53130833f5bc182341733d4366a",
       "log": "bad_image_rejected.log"
     },
     {
@@ -400,8 +419,9 @@
       "passed": true,
       "timeout": false,
       "exit_code": 0,
-      "seconds": 0.033,
+      "seconds": 0.017,
       "expected_unreachable": true,
+      "expected_results": null,
       "results": [
         {
           "query": "not event(RelayGotHop(tag_reg[],APP_L,R0))",
@@ -409,7 +429,7 @@
         }
       ],
       "input": "public_cert_replay_rejected.pv",
-      "input_sha256": "9bd7f71e6b163ab23d7b719046d6f9a8a300d61a44460543f162ed09fffb81d4",
+      "input_sha256": "72dbb2674b95e30d21d9783af1fbdcb573a514f62353cd0f319c4cbd8e69ec11",
       "log": "public_cert_replay_rejected.log"
     },
     {
@@ -417,8 +437,9 @@
       "passed": true,
       "timeout": false,
       "exit_code": 0,
-      "seconds": 0.033,
+      "seconds": 0.016,
       "expected_unreachable": false,
+      "expected_results": null,
       "results": [
         {
           "query": "not event(RelayGotHop(tag_reg[],APP_L,R0))",
@@ -426,7 +447,7 @@
         }
       ],
       "input": "possession_check_removed.pv",
-      "input_sha256": "417504a477f986ab9209bcec8750727c2583eead09c52c560088545f44ea7b01",
+      "input_sha256": "6c87a2e9b9825258faa261fd43eff222f4c47ffc68037c0ed36ee9449fdc4366",
       "log": "possession_check_removed.log"
     }
   ]

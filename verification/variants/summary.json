@@ -1,0 +1,212 @@
+{
+  "tool": "Proverif 2.05. Cryptographic protocol verifier, by Bruno Blanchet, Vincent Cheval, and Marc Sylvestre",
+  "model": "protocol.pv",
+  "model_sha256": "6f530d2d69fd47fbacf37b2e63a57dc9e06f1b56fa17dbd61cf7917e7d2f1ce9",
+  "command_options": {
+    "group": "variants",
+    "cases": null,
+    "timeout_seconds": 900
+  },
+  "runs": [
+    {
+      "name": "v1_per_device_binding",
+      "passed": true,
+      "timeout": false,
+      "exit_code": 0,
+      "seconds": 19.627,
+      "expected_unreachable": null,
+      "expected_results": {
+        "secret_msg": "is true",
+        "secret_msg_reverse": "is true",
+        "qkd_k(R0,R1)": "is true",
+        "qkd_k(R1,R2)": "is true",
+        "qkd_k(R1,R0)": "is true",
+        "qkd_k(R2,R1)": "is true",
+        "Q1": "is true",
+        "Q2": "is true",
+        "Q3": "is true",
+        "Q4": "is true",
+        "Q5": "is true",
+        "Q6": "is true",
+        "Q7": "is true",
+        "Q8": "is true",
+        "Q9": "is true",
+        "Q10": "is true",
+        "Q11": "is true"
+      },
+      "results": [
+        {
+          "query": "not attacker(secret_msg[])",
+          "result": "is true"
+        },
+        {
+          "query": "not attacker(secret_msg_reverse[])",
+          "result": "is true"
+        },
+        {
+          "query": "not attacker(qkd_k(R0,R1))",
+          "result": "is true"
+        },
+        {
+          "query": "not attacker(qkd_k(R1,R2))",
+          "result": "is true"
+        },
+        {
+          "query": "not attacker(qkd_k(R1,R0))",
+          "result": "is true"
+        },
+        {
+          "query": "not attacker(qkd_k(R2,R1))",
+          "result": "is true"
+        },
+        {
+          "query": "event(CtrlIssuedCert(rid_8,n_8,m,pb)) ==> event(CtrlGotAttest(rid_8,n_8,m))",
+          "result": "is true"
+        },
+        {
+          "query": "event(CtrlGotAttest(rid_8,n_8,m)) ==> event(CtrlGotRegister(rid_8))",
+          "result": "is true"
+        },
+        {
+          "query": "inj-event(CtrlIssuedCert(rid_8,n_8,m,pb)) ==> inj-event(CtrlGotAttest(rid_8,n_8,m))",
+          "result": "is true"
+        },
+        {
+          "query": "inj-event(CtrlGotAttest(rid_8,n_8,m)) ==> inj-event(RelaySignedReport(rid_8,n_8,m))",
+          "result": "is true"
+        },
+        {
+          "query": "event(RelayGotHop(m,f,t)) ==> event(HopSent(m,f,t))",
+          "result": "is true"
+        },
+        {
+          "query": "event(RelayGotHop(x,f,t)) ==> event(RelayLoadedCfg(t,n_8,f,r)) || event(RelayLoadedCfg(t,n_8,l,f))",
+          "result": "is true"
+        },
+        {
+          "query": "event(RelaySentHop(x,f,t)) ==> event(RelayLoadedCfg(f,n_8,l,t)) || event(RelayLoadedCfg(f,n_8,t,r))",
+          "result": "is true"
+        },
+        {
+          "query": "event(RelayLoadedCfg(rid_8,n_8,l,r)) ==> event(CtrlSentCfg(rid_8,n_8,l,r))",
+          "result": "is true"
+        },
+        {
+          "query": "event(RelayGotCert(rid_8,n_8,m,pb)) ==> event(CtrlIssuedCert(rid_8,n_8,m,pb))",
+          "result": "is true"
+        },
+        {
+          "query": "inj-event(HopPeerAuthenticated(f,t,ek_17,n_8)) ==> inj-event(HopSignedTranscript(f,t,ek_17,n_8))",
+          "result": "is true"
+        },
+        {
+          "query": "event(AppDelivered(m,f,t)) ==> event(HopSent(m,f,t))",
+          "result": "is true"
+        }
+      ],
+      "input": "v1_per_device_binding.pv",
+      "input_sha256": "acf53dae325bb740722f60c6a5814ffe2ebc3094c1d0e7a4b2f42c16203863cc",
+      "log": "v1_per_device_binding.log"
+    },
+    {
+      "name": "v2_shared_root_key",
+      "passed": true,
+      "timeout": false,
+      "exit_code": 0,
+      "seconds": 31.866,
+      "expected_unreachable": null,
+      "expected_results": {
+        "secret_msg": "is false",
+        "secret_msg_reverse": "is true",
+        "qkd_k(R0,R1)": "is true",
+        "qkd_k(R1,R2)": "is true",
+        "qkd_k(R1,R0)": "is true",
+        "qkd_k(R2,R1)": "is true",
+        "Q1": "is true",
+        "Q2": "is true",
+        "Q3": "is true",
+        "Q4": "is false",
+        "Q5": "is true",
+        "Q6": "is true",
+        "Q7": "is true",
+        "Q8": "is true",
+        "Q9": "is true",
+        "Q10": "is false",
+        "Q11": "is false"
+      },
+      "results": [
+        {
+          "query": "not attacker(secret_msg[])",
+          "result": "is false"
+        },
+        {
+          "query": "not attacker(secret_msg_reverse[])",
+          "result": "is true"
+        },
+        {
+          "query": "not attacker(qkd_k(R0,R1))",
+          "result": "is true"
+        },
+        {
+          "query": "not attacker(qkd_k(R1,R2))",
+          "result": "is true"
+        },
+        {
+          "query": "not attacker(qkd_k(R1,R0))",
+          "result": "is true"
+        },
+        {
+          "query": "not attacker(qkd_k(R2,R1))",
+          "result": "is true"
+        },
+        {
+          "query": "event(CtrlIssuedCert(rid_8,n_8,m,pb)) ==> event(CtrlGotAttest(rid_8,n_8,m))",
+          "result": "is true"
+        },
+        {
+          "query": "event(CtrlGotAttest(rid_8,n_8,m)) ==> event(CtrlGotRegister(rid_8))",
+          "result": "is true"
+        },
+        {
+          "query": "inj-event(CtrlIssuedCert(rid_8,n_8,m,pb)) ==> inj-event(CtrlGotAttest(rid_8,n_8,m))",
+          "result": "is true"
+        },
+        {
+          "query": "inj-event(CtrlGotAttest(rid_8,n_8,m)) ==> inj-event(RelaySignedReport(rid_8,n_8,m))",
+          "result": "is false"
+        },
+        {
+          "query": "event(RelayGotHop(m,f,t)) ==> event(HopSent(m,f,t))",
+          "result": "is true"
+        },
+        {
+          "query": "event(RelayGotHop(x,f,t)) ==> event(RelayLoadedCfg(t,n_8,f,r)) || event(RelayLoadedCfg(t,n_8,l,f))",
+          "result": "is true"
+        },
+        {
+          "query": "event(RelaySentHop(x,f,t)) ==> event(RelayLoadedCfg(f,n_8,l,t)) || event(RelayLoadedCfg(f,n_8,t,r))",
+          "result": "is true"
+        },
+        {
+          "query": "event(RelayLoadedCfg(rid_8,n_8,l,r)) ==> event(CtrlSentCfg(rid_8,n_8,l,r))",
+          "result": "is true"
+        },
+        {
+          "query": "event(RelayGotCert(rid_8,n_8,m,pb)) ==> event(CtrlIssuedCert(rid_8,n_8,m,pb))",
+          "result": "is true"
+        },
+        {
+          "query": "inj-event(HopPeerAuthenticated(f,t,ek_17,n_8)) ==> inj-event(HopSignedTranscript(f,t,ek_17,n_8))",
+          "result": "is false"
+        },
+        {
+          "query": "event(AppDelivered(m,f,t)) ==> event(HopSent(m,f,t))",
+          "result": "is false"
+        }
+      ],
+      "input": "v2_shared_root_key.pv",
+      "input_sha256": "ba3ab0e44706edb5e3fa2d4edadc64b33526e5546d9f5c8656eb2eae278a42dd",
+      "log": "v2_shared_root_key.log"
+    }
+  ]
+}

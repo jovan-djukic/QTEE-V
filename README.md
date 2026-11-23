@@ -572,6 +572,17 @@ checks; the relays enforce them at runtime (controller certificate CN must be
 tests 7 and 8), and the test client does with `--expect-peer`. These results do not prove the C/Python implementation, KME delivery,
 physical isolation or quantum resistance of the concrete algorithms.
 
+**Device-binding variants.** `--group variants` checks the model's assumption of one
+hardware key per relay identity (`hw_sk(rid)`): an adversary owning one more genuine device,
+running R0's genuine image and leaking its memory, is rejected when every device has its own
+key (all 17 queries hold), but registers as R0 when one root key endorses every device
+(ProVerif finds attacks on `secret_msg`, Q4, Q10 and Q11). Results are in
+`verification/variants/`.
+
+```bash
+python verification/run_verification.py --proverif /path/to/proverif --group variants
+```
+
 See [verification/README.md](verification/README.md) for the query inventory,
 assumptions, implementation mapping and reproduction instructions.
 
